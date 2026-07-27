@@ -29,6 +29,9 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"
 
 
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
 def load_state():
     if STATE_FILE.exists():
         try:
@@ -45,6 +48,9 @@ def save_state(state):
     )
 
 
+# ---------------------------------------------------------------------------
+# লিস্ট পেজ থেকে রো এক্সট্র্যাকশন
+# ---------------------------------------------------------------------------
 def extract_tender_rows(page):
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
@@ -93,6 +99,9 @@ def extract_tender_rows(page):
     return rows_data
 
 
+# ---------------------------------------------------------------------------
+# ডিটেইলস পেজ (ViewTender.jsp) থেকে Document Price ও Security Amount বের করা
+# ---------------------------------------------------------------------------
 def fetch_detail_html(context, tender_id):
     try:
         resp = context.request.post(
@@ -110,12 +119,14 @@ def fetch_detail_html(context, tender_id):
 
 
 def extract_price_fields(detail_html):
+    """Document Price এবং Security Amount বের করে। দুটোই না পেলে 'N/A'।"""
     result = {"doc_price": "N/A", "security": "N/A"}
     if not detail_html:
         return result
 
     soup = BeautifulSoup(detail_html, "html.parser")
 
+    # ১. Document Price: label:value টাইপ ফিল্ড (td পেয়ারে থাকে সাধারণত)
     for td in soup.find_all("td"):
         label = td.get_text(strip=True)
         if "Document Price" in label:
@@ -126,6 +137,7 @@ def extract_price_fields(detail_html):
                     result["doc_price"] = val
             break
 
+    # ২. Security Amount: সাধারণত "Lot" টেবিলের একটা কলামে থাকে
     lot_table = None
     for table in soup.find_all("table"):
         header_text = table.get_text()
@@ -156,6 +168,9 @@ def extract_price_fields(detail_html):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Telegram
+# ---------------------------------------------------------------------------
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID সেট করা নেই।")
@@ -190,6 +205,9 @@ def build_message(sl_no, tender_id, title, org, pub_date, close_date, doc_price,
     )
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
     state = load_state()
     seen_ids = set(state.get("seen_ids", []))
@@ -212,8 +230,10 @@ def main():
             print(f"📡 লিস্ট পেজ লোড হচ্ছে (attempt {attempt}/{MAX_ATTEMPTS}): {LIST_URL}")
             try:
                 page.goto(LIST_URL, wait_until="domcontentloaded", timeout=60000)
+                # সরাসরি টেবিলের জন্য অপেক্ষা করা, networkidle এর বদলে
+                # (কিছু পার্সিস্টেন্ট JS পোলার থাকলে networkidle কখনো নাও আসতে পারে)
                 page.wait_for_selector("table#resultTable tr", timeout=30000)
-                time.sleep(2)
+                time.sleep(2)  # শেষ কিছু AJAX আপডেটের জন্য বাড়তি সময়
             except PWTimeoutError:
                 print("⚠️ #resultTable এর জন্য টাইমআউট — সাইট ধীরে সাড়া দিচ্ছে বা ব্লক করছে হয়তো।")
 
@@ -267,7 +287,7 @@ def main():
 
             send_telegram_message(msg)
             seen_ids.add(tender_id)
-            time.sleep(1)
+            time.sleep(1)  # Telegram rate limit এড়াতে
 
         browser.close()
 
