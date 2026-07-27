@@ -2,8 +2,8 @@ name: eGP Tender grabber
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # প্রতি ৪ ঘণ্টা পর পর রান হবে
-  workflow_dispatch:
+    - cron: '0 */4 * * *' # প্রতি ৪ ঘণ্টা পর পর স্বয়ংক্রিয়ভাবে রান হবে
+  workflow_dispatch: # যখন খুশি ম্যানুয়ালি রান করার জন্য
 
 jobs:
   scrape:
@@ -24,7 +24,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Install Playwright Browsers
-      run: playwright install chromium # <-- প্লে-রাইটের জন্য এটি বাধ্যতামূলক
+      run: playwright install chromium
 
     - name: Run Scraper
       env:
@@ -36,5 +36,5 @@ jobs:
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git add state.json
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update state list" && git push)
+        git add processed_tenders.json
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed tenders list" && git push)
