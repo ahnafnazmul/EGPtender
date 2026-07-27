@@ -1,0 +1,55 @@
+name: eGP Tender Scanner
+
+on:
+  schedule:
+    # প্রতি ৪ ঘন্টা পরপর (UTC সময়ে) — GitHub cron গ্যারান্টিড এক্স্যাক্ট টাইম না,
+    # কয়েক মিনিট এদিক-ওদিক হতে পারে
+    - cron: "0 */4 * * *"
+  workflow_dispatch: {}   # ম্যানুয়ালি "Run workflow" বাটন দিয়ে টেস্ট করার জন্য
+
+permissions:
+  contents: write   # state.json কমিট করার জন্য দরকার
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run scraper
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DEBUG_MODE: "false"
+        run: python scraper.py
+
+      - name: Upload debug artifacts (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-output
+          path: |
+            debug_screenshot.png
+            debug_page.html
+            debug_detail_page.html
+          if-no-files-found: ignore
+
+      - name: Commit updated state.json
+        run: |
+          git config user.name "tender-bot"
+          git config user.email "tender-bot@users.noreply.github.com"
+          git add state.json
+          git diff --quiet --cached || git commit -m "chore: update seen tender state [skip ci]"
+          git push
