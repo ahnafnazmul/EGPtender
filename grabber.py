@@ -9,7 +9,6 @@ from playwright.sync_api import sync_playwright
 BASE_URL = "https://www.eprocure.gov.bd"
 LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
 
-# ফাইল ট্র্যাকিং নেম
 DATA_FILE = Path(__file__).parent / "processed_tenders.json"
 MAX_SEEN_IDS = 5000 
 
@@ -17,7 +16,6 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def load_processed_tenders():
-    """লিস্ট ফরম্যাটে থাকা টেন্ডার আইডি লোড করার ফাংশন"""
     if DATA_FILE.exists():
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -30,7 +28,6 @@ def load_processed_tenders():
     return []
 
 def save_processed_tenders(tenders_list):
-    """লিস্ট ফরম্যাটে টেন্ডার আইডি সেভ করার ফাংশন"""
     tenders_list = tenders_list[-MAX_SEEN_IDS:]
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(tenders_list, f, ensure_ascii=False, indent=2)
@@ -46,7 +43,6 @@ def send_telegram_message(text):
         print(f"❌ Telegram Error: {e}")
 
 def parse_detail_page(html_content):
-    """ডিটেইলস পেজের HTML থেকে প্রয়োজনীয় সব তথ্য বের করার ফাংশন"""
     soup = BeautifulSoup(html_content, "html.parser")
     details = {
         "org": "N/A",
@@ -56,31 +52,26 @@ def parse_detail_page(html_content):
         "security": "N/A"
     }
     
-    # অর্গানাইজেশন
     org_td = soup.find(string=lambda text: text and "Organization :" in text)
     if org_td:
         try: details["org"] = org_td.find_next('td').text.strip()
         except: pass
         
-    # প্রচারের তারিখ
     pub_td = soup.find(string=lambda text: text and "Publication" in text and "Date and Time" in text)
     if pub_td:
         try: details["publish_date"] = pub_td.find_next('td').text.strip()
         except: pass
         
-    # শেষ হবার তারিখ
     close_td = soup.find(string=lambda text: text and "Closing" in text and "Date and Time" in text)
     if close_td:
         try: details["closing_date"] = close_td.find_next('td').text.strip()
         except: pass
         
-    # টেন্ডার শিডিউল দাম
     price_td = soup.find(string=lambda text: text and "Document Price" in text)
     if price_td:
         try: details["price"] = price_td.find_next('td').text.strip()
         except: pass
         
-    # টেন্ডার সিকিউরিটি
     security_th = soup.find(string=lambda text: text and "security" in text and "Amount" in text)
     if security_th:
         try:
@@ -96,8 +87,22 @@ def main():
     seen_ids = set(processed_list)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        # ব্লকিং এড়াতে অতিরিক্ত ক্রোমিয়াম আর্গুমেন্ট যুক্ত করা হয়েছে
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-setuid-sandbox",
+                "--no-sandbox"
+            ]
+        )
+        
+        # স্ক্রিন সাইজ এবং সাধারণ ইউজারের মতো রিগিং করা
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 720},
+            locale="en-US"
+        )
         page = context.new_page()
 
         MAX_ATTEMPTS = 3
@@ -106,24 +111,27 @@ def main():
         for attempt in range(1, MAX_ATTEMPTS + 1):
             print(f"📡 মেইন লিস্ট পেজ লোড হচ্ছে (Attempt {attempt}/{MAX_ATTEMPTS})")
             try:
-                page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
-                # টেবিলের ভেতরে ডাটা রো (অন্তত ২ নম্বর tr) রেন্ডার হওয়া পর্যন্ত অপেক্ষা করবে
-                page.wait_for_selector("table#resultTable tr >> nth=1", timeout=15000)
+                # পেজ ওপেন করে ১০ সেকেন্ডের একটা সলিড হোল্ড দেওয়া
+                page.goto(LIST_URL, wait_until="domcontentloaded", timeout=60000)
+                time.sleep(10)
+                
+                # টেবিলটি লোড হতে সময় দেওয়া
+                page.wait_for_selector("table#resultTable", timeout=20000)
                 table_found = True
                 break
             except Exception as e:
-                print(f"⚠️ টেবিলের ডাটা রো এখনো লোড হয়নি: {e}")
+                print(f"⚠️ টেবিল লোড হতে সমস্যা হয়েছে: {e}")
                 time.sleep(5)
 
         if not table_found:
-            print("❌ ই-জিপি মেইন টেবিলের ডাটা লোড করা সম্ভব হয়নি।")
+            print("❌ ই-জিপি মেইন টেবিলটি পেজে খুঁজে পাওয়া যায়নি (সম্ভবত আইপি বা বটের কারণে পেজ ব্লক করেছে)।")
             browser.close()
             return
 
         html = page.content()
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table", id="resultTable")
-        trs = table.find_all("tr")[1:] 
+        trs = table.find_all("tr")[1:] if table else []
 
         tenders_to_process = []
         for tr in trs:
@@ -151,7 +159,6 @@ def main():
             print(f"🔗 ডিটেইলস পেজে ঢুকছি: Tender ID {t_id}")
             
             try:
-                # মেইন পেজে ওই টেন্ডারের লাইনের ভেতরের Title এ থাকা লিংকে ক্লিক
                 link_locator = page.locator(f"//table[@id='resultTable']//tr[td[1][text()='{item['sl_no']}'] or td[2][contains(text(),'{t_id}')]]/td[3]/a")
                 
                 if link_locator.count() > 0:
@@ -159,8 +166,8 @@ def main():
                         link_locator.first.click()
                     
                     detail_page = new_page_info.value
-                    detail_page.wait_for_load_state("networkidle")
-                    time.sleep(3) 
+                    detail_page.wait_for_load_state("domcontentloaded")
+                    time.sleep(5) 
                     
                     detail_html = detail_page.content()
                     extra_info = parse_detail_page(detail_html)
@@ -173,7 +180,6 @@ def main():
                 print(f"❌ স্ক্র্যাপ করতে সমস্যা হয়েছে ({t_id}): {e}")
                 extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
 
-            # আপনার দেওয়া সুনির্দিষ্ট বাংলা ফরম্যাট
             msg = (
                 f"<b>সিরিয়াল নম্বরঃ</b> {item['sl_no']}\n"
                 f"<b>টেন্ডার আইডিঃ</b> {t_id}\n"
@@ -187,7 +193,7 @@ def main():
 
             send_telegram_message(msg)
             processed_list.append(t_id)
-            time.sleep(2) 
+            time.sleep(3) 
 
         browser.close()
 
