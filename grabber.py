@@ -9,30 +9,41 @@ from playwright.sync_api import sync_playwright
 BASE_URL = "https://www.eprocure.gov.bd"
 LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
 
-STATE_FILE = Path(__file__).parent / "processed_tenders.json"
+# আপনার রিকোয়েস্ট অনুযায়ী ফাইলের নাম পরিবর্তন করা হলো
+DATA_FILE = Path(__file__).parent / "processed_tenders.json"
 MAX_SEEN_IDS = 5000 
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-def load_state():
-    if STATE_FILE.exists():
+def load_processed_tenders():
+    """লিস্ট ফরম্যাটে থাকা টেন্ডার আইডি লোড করার ফাংশন"""
+    if DATA_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {"seen_ids": []}
-    return {"seen_ids": []}
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                return []
+        except:
+            return []
+    return []
 
-def save_state(state):
-    state["seen_ids"] = state["seen_ids"][-MAX_SEEN_IDS:]
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_processed_tenders(tenders_list):
+    """লিস্ট ফরম্যাটে টেন্ডার আইডি সেভ করার ফাংশন"""
+    tenders_list = tenders_list[-MAX_SEEN_IDS:]
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(tenders_list, f, ensure_ascii=False, indent=2)
 
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: 
         print("⚠️ Telegram Token/Chat ID missing!")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=30)
+    try:
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=30)
+    except Exception as e:
+        print(f"❌ Telegram Error: {e}")
 
 def parse_detail_page(html_content):
     """ডিটেইলস পেজের HTML থেকে প্রয়োজনীয় সব তথ্য বের করার ফাংশন"""
@@ -81,11 +92,11 @@ def parse_detail_page(html_content):
     return details
 
 def main():
-    state = load_state()
-    seen_ids = set(state.get("seen_ids", []))
+    # সরাসরি লিস্ট লোড করা হচ্ছে, কোনো .get() এরর আসবে না
+    processed_list = load_processed_tenders()
+    seen_ids = set(processed_list)
 
     with sync_playwright() as p:
-        # ব্রাউজার লঞ্চ করা
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
@@ -96,7 +107,7 @@ def main():
         for attempt in range(1, MAX_ATTEMPTS + 1):
             print(f"📡 মেইন লিস্ট পেজ লোড হচ্ছে (Attempt {attempt}/{MAX_ATTEMPTS})")
             page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
-            time.sleep(5) # টেবিল রেন্ডার হওয়ার জন্য একটু অতিরিক্ত সময় দেওয়া
+            time.sleep(5) 
             
             if page.locator("table#resultTable").count() > 0:
                 table_found = True
@@ -109,13 +120,11 @@ def main():
             browser.close()
             return
 
-        # মেইন পেজের HTML থেকে রো-গুলো বের করা
         html = page.content()
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table", id="resultTable")
-        trs = table.find_all("tr")[1:] # হেডার বাদ দিয়ে
+        trs = table.find_all("tr")[1:] 
 
-        # প্রথমে নতুন টেন্ডারগুলো ফিল্টার করে নেওয়া
         tenders_to_process = []
         for tr in trs:
             tds = tr.find_all("td")
@@ -137,40 +146,32 @@ def main():
 
         print(f"🆕 প্রসেস করার মতো নতুন টেন্ডার পাওয়া গেছে: {len(tenders_to_process)} টি।")
 
-        # এবার প্রতিটা নতুন টেন্ডারের লিংকে ক্লিক করে ভেতরে ঢুকবে
         for item in tenders_to_process:
             t_id = item["tender_id"]
             print(f"🔗 ডিটেইলস পেজে ঢুকছি: Tender ID {t_id}")
             
             try:
-                # মেইন পেজে ওই নির্দিষ্ট Tender ID এর সারির Title লিকে লোকেটর তৈরি করা
-                # Procurement Nature, Title সাধারণত ৩ নম্বর কলাম (index 2), সেখানে থাকা 'a' ট্যাগ
                 link_locator = page.locator(f"//table[@id='resultTable']//tr[td[1][text()='{item['sl_no']}'] or td[2][contains(text(),'{t_id}')]]/td[3]/a")
                 
                 if link_locator.count() > 0:
-                    # ক্লিক করলে যেহেতু নিউ ট্যাব ওপেন হয়, তাই নিউ পেজ ইভেন্ট এক্সপেক্ট করা হচ্ছে
                     with context.expect_page() as new_page_info:
                         link_locator.first.click()
                     
                     detail_page = new_page_info.value
-                    detail_page.wait_until_穩able = "networkidle"
-                    time.sleep(3) # পেজের ডাটা পুরোপুরি লোড হতে সময় দেওয়া
+                    detail_page.wait_until="networkidle" # টাইপো ফিক্স করা হয়েছে
+                    time.sleep(3) 
                     
-                    # ডিটেইলস পেজের ডাটা স্ক্র্যাপ করা
                     detail_html = detail_page.content()
                     extra_info = parse_detail_page(detail_html)
-                    
-                    # কাজ শেষ, নতুন ট্যাবটি বন্ধ করে দেওয়া
                     detail_page.close()
                 else:
-                    print(f"⚠️ টেন্ডার {t_id} এর লিংক ক্লিক করার জন্য খুঁজে পাওয়া যায়নি।")
+                    print(f"⚠️ টেন্ডার {t_id} এর লিংক খুঁজে পাওয়া যায়নি।")
                     extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
             
             except Exception as e:
-                print(f"❌ ডিটেইলস পেজে ঢুকে স্ক্র্যাপ করতে সমস্যা হয়েছে ({t_id}): {e}")
+                print(f"❌ স্ক্র্যাপ করতে সমস্যা হয়েছে ({t_id}): {e}")
                 extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
 
-            # সম্পূর্ণ বাংলা ফরম্যাটে মেসেজ তৈরি
             msg = (
                 f"<b>সিরিয়াল নম্বরঃ</b> {item['sl_no']}\n"
                 f"<b>টেন্ডার আইডিঃ</b> {t_id}\n"
@@ -183,15 +184,14 @@ def main():
             )
 
             send_telegram_message(msg)
-            seen_ids.add(t_id)
-            time.sleep(2) # টেলিগ্রাম রেট লিমিট এড়াতে বিরতি
+            processed_list.append(t_id)
+            time.sleep(2) 
 
         browser.close()
 
-    # স্টেট ফাইল আপডেট
-    state["seen_ids"] = list(seen_ids)
-    save_state(state)
-    print("✅ সফলভাবে রান শেষ হয়েছে এবং state.json আপডেট করা হয়েছে।")
+    # লিস্ট ফরম্যাটে নতুন ফাইল সেভ করা
+    save_processed_tenders(processed_list)
+    print("✅ সফলভাবে রান শেষ হয়েছে এবং processed_tenders.json আপডেট করা হয়েছে।")
 
 if __name__ == "__main__":
     main()
