@@ -1,37 +1,32 @@
 """
 eGP (eprocure.gov.bd) Tender Notification Bot
 ------------------------------------------------
-- StdTenderSearch.jsp?h=t পেজ থেকে টেন্ডার লিস্ট স্ক্র্যাপ করে (Playwright দিয়ে,
-  কারণ টেবিলটা AJAX/JS দিয়ে রেন্ডার হয়, প্লেইন HTTP request কাজ করবে না)
+- StdTenderSearch.jsp?h=t পেজ থেকে টেন্ডার লিস্ট স্ক্র্যাপ করে (Playwright দিয়ে)
 - state.json এ আগে পাঠানো Tender ID গুলো রাখা হয়, নতুন পাওয়া গেলে সেগুলোই পাঠানো হবে
-- প্রতিটা নতুন টেন্ডারের ডিটেইলস পেজে গিয়ে PDF ডাউনলোড লিংক খুঁজে PDF ডাউনলোড করা হয়
-- সবশেষে Telegram এ মেসেজ + PDF (থাকলে) পাঠানো হয়
-- v3: লিস্ট পেজে ০ রো পেলে ৩ বার পর্যন্ত রিট্রাই করবে (সাইটের সাময়িক গ্লিচ সামলাতে)
+- প্রতিটা নতুন টেন্ডারের ডিটেইলস পেজে (ViewTender.jsp) গিয়ে Document Price ও
+  Security Amount বের করা হয়
+- সবশেষে Telegram এ সম্পূর্ণ বাংলা ফরম্যাটে মেসেজ পাঠানো হয়
+- v4: PDF অংশ বাদ দেওয়া হয়েছে, মেসেজ বাংলায়, wait-strategy শক্ত করা হয়েছে
 """
 
 import os
-import re
 import json
-import sys
 import time
 import requests
 from pathlib import Path
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 BASE_URL = "https://www.eprocure.gov.bd"
 LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
 VIEW_TENDER_URL = f"{BASE_URL}/resources/common/ViewTender.jsp"
 
 STATE_FILE = Path(__file__).parent / "state.json"
-MAX_SEEN_IDS = 5000  # state ফাইল যেন অসীম বড় না হয়ে যায়
+MAX_SEEN_IDS = 5000
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"
-
-DOWNLOAD_DIR = Path(__file__).parent / "downloads"
-DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 
 def load_state():
@@ -57,7 +52,7 @@ def extract_tender_rows(page):
     rows_data = []
 
     if table is None:
-        print("⚠️ #resultTable পাওয়া যায়নি, সাইটের গঠন বদলে গেছে হয়তো।")
+        print("⚠️ #resultTable পাওয়া যায়নি।")
         return rows_data
 
     trs = table.find_all("tr")
@@ -70,12 +65,9 @@ def extract_tender_rows(page):
 
         id_cell_lines = [x.strip() for x in tds[1].get_text(separator="|").split("|") if x.strip()]
         tender_id = id_cell_lines[0] if id_cell_lines else None
-        ref_no = id_cell_lines[1] if len(id_cell_lines) > 1 else "N/A"
-        status = id_cell_lines[-1] if len(id_cell_lines) > 2 else "N/A"
 
         title_cell_lines = [x.strip() for x in tds[2].get_text(separator="|").split("|") if x.strip()]
-        nature = title_cell_lines[0] if title_cell_lines else "N/A"
-        title_text = title_cell_lines[-1] if len(title_cell_lines) > 1 else "N/A"
+        title_text = title_cell_lines[-1] if len(title_cell_lines) > 1 else (title_cell_lines[0] if title_cell_lines else "N/A")
 
         org_cell_lines = [x.strip() for x in tds[3].get_text(separator="|").split("|") if x.strip()]
         organization = " > ".join(org_cell_lines) if org_cell_lines else "N/A"
@@ -91,9 +83,6 @@ def extract_tender_rows(page):
             {
                 "sl_no": sl_no,
                 "tender_id": tender_id,
-                "ref_no": ref_no,
-                "status": status,
-                "nature": nature,
                 "title": title_text,
                 "organization": organization,
                 "pub_date": pub_date,
@@ -104,60 +93,67 @@ def extract_tender_rows(page):
     return rows_data
 
 
-PDF_KEYWORDS = ("pdf", "report", "print", "save", "download", "export")
-
-
 def fetch_detail_html(context, tender_id):
-    resp = context.request.post(
-        VIEW_TENDER_URL,
-        form={"id": tender_id, "h": "t"},
-        timeout=60000,
-    )
-    if not resp.ok:
-        print(f"⚠️ ViewTender.jsp POST ব্যর্থ ({tender_id}): status {resp.status}")
+    try:
+        resp = context.request.post(
+            VIEW_TENDER_URL,
+            form={"id": tender_id, "h": "t"},
+            timeout=60000,
+        )
+        if not resp.ok:
+            print(f"⚠️ ViewTender.jsp POST ব্যর্থ ({tender_id}): status {resp.status}")
+            return None
+        return resp.text()
+    except Exception as e:
+        print(f"⚠️ ViewTender.jsp POST এক্সেপশন ({tender_id}): {e}")
         return None
-    return resp.text()
 
 
-def find_pdf_url(detail_html):
+def extract_price_fields(detail_html):
+    result = {"doc_price": "N/A", "security": "N/A"}
+    if not detail_html:
+        return result
+
     soup = BeautifulSoup(detail_html, "html.parser")
-    candidates = []
 
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        text = a.get_text(strip=True).lower()
-        if href in ("", "#", "javascript:void(0)", "javascript:void(0);"):
-            continue
-        if any(k in href.lower() for k in PDF_KEYWORDS) or any(k in text for k in PDF_KEYWORDS):
-            candidates.append(href if href.startswith("http") else BASE_URL + href)
+    for td in soup.find_all("td"):
+        label = td.get_text(strip=True)
+        if "Document Price" in label:
+            sib = td.find_next_sibling("td")
+            if sib:
+                val = sib.get_text(strip=True)
+                if val:
+                    result["doc_price"] = val
+            break
 
-    for form in soup.find_all("form", action=True):
-        action = form["action"].strip()
-        if any(k in action.lower() for k in PDF_KEYWORDS):
-            full = action if action.startswith("http") else BASE_URL + action
-            if full not in candidates:
-                candidates.append(full)
+    lot_table = None
+    for table in soup.find_all("table"):
+        header_text = table.get_text()
+        if "security" in header_text.lower() and ("Lot" in header_text or "Identification" in header_text):
+            lot_table = table
+            break
 
-    return candidates
+    if lot_table:
+        trs = lot_table.find_all("tr")
+        if trs:
+            header_cells = [c.get_text(strip=True) for c in trs[0].find_all(["th", "td"])]
+            sec_idx = None
+            for i, h in enumerate(header_cells):
+                if "security" in h.lower():
+                    sec_idx = i
+                    break
+            if sec_idx is not None:
+                values = []
+                for tr in trs[1:]:
+                    tds = tr.find_all("td")
+                    if len(tds) > sec_idx:
+                        v = tds[sec_idx].get_text(strip=True)
+                        if v:
+                            values.append(v)
+                if values:
+                    result["security"] = ", ".join(values)
 
-
-def download_pdf(context, detail_html, tender_id):
-    candidates = find_pdf_url(detail_html)
-    for url in candidates:
-        try:
-            resp = context.request.get(url, timeout=60000)
-            content_type = resp.headers.get("content-type", "")
-            if resp.ok and ("application/pdf" in content_type or url.lower().endswith(".pdf")):
-                out_path = DOWNLOAD_DIR / f"{tender_id}.pdf"
-                out_path.write_bytes(resp.body())
-                return out_path
-        except Exception as e:
-            print(f"⚠️ PDF candidate ব্যর্থ ({tender_id}, {url}): {e}")
-    if candidates:
-        print(f"⚠️ {tender_id}: {len(candidates)} টা candidate পাওয়া গেছে কিন্তু কোনোটাই PDF রেসপন্স দেয়নি: {candidates}")
-    else:
-        print(f"⚠️ {tender_id}: ডিটেইলস পেজে কোনো PDF/Save/Print লিংক পাওয়া যায়নি।")
-    return None
+    return result
 
 
 def send_telegram_message(text):
@@ -179,32 +175,17 @@ def send_telegram_message(text):
         print(f"⚠️ Telegram মেসেজ পাঠাতে সমস্যা: {resp.status_code} {resp.text}")
 
 
-def send_telegram_document(file_path, caption=None):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-    with open(file_path, "rb") as f:
-        resp = requests.post(
-            url,
-            data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption or ""},
-            files={"document": f},
-            timeout=120,
-        )
-    if not resp.ok:
-        print(f"⚠️ Telegram ফাইল পাঠাতে সমস্যা: {resp.status_code} {resp.text}")
-
-
-def build_message(sl_no, tender_id, title, org, pub_date, close_date, has_pdf):
-    pdf_line = "নিচে সংযুক্ত ⬇️" if has_pdf else "পাওয়া যায়নি (নিচের লিংকে গিয়ে দেখো)"
+def build_message(sl_no, tender_id, title, org, pub_date, close_date, doc_price, security):
     return (
         f"🆕 <b>নতুন টেন্ডার বিজ্ঞপ্তি</b>\n\n"
-        f"<b>SL No:</b> {sl_no}\n"
-        f"<b>Tender ID:</b> {tender_id}\n"
-        f"<b>Title:</b> {title}\n"
-        f"<b>Organization:</b> {org}\n"
-        f"<b>Publishing Date:</b> {pub_date}\n"
-        f"<b>Closing Date:</b> {close_date}\n"
-        f"<b>PDF:</b> {pdf_line}\n\n"
+        f"<b>সিরিয়াল নম্বরঃ</b> {sl_no}\n"
+        f"<b>টেন্ডার আইডিঃ</b> {tender_id}\n"
+        f"<b>টাইটেলঃ</b> {title}\n"
+        f"<b>অর্গানাইজেশনঃ</b> {org}\n"
+        f"<b>প্রচারের তারিখঃ</b> {pub_date}\n"
+        f"<b>শেষ হবার তারিখঃ</b> {close_date}\n"
+        f"<b>টেন্ডার শিডিউল দামঃ</b> {doc_price}\n"
+        f"<b>টেন্ডার সিকিউরিটিঃ</b> {security}\n\n"
         f"🔗 <a href='{LIST_URL}'>লিস্ট পেজে দেখো</a>"
     )
 
@@ -219,7 +200,9 @@ def main():
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-            )
+            ),
+            viewport={"width": 1366, "height": 900},
+            locale="en-US",
         )
         page = context.new_page()
 
@@ -227,22 +210,29 @@ def main():
         rows = []
         for attempt in range(1, MAX_ATTEMPTS + 1):
             print(f"📡 লিস্ট পেজ লোড হচ্ছে (attempt {attempt}/{MAX_ATTEMPTS}): {LIST_URL}")
-            page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
-            time.sleep(3)
+            try:
+                page.goto(LIST_URL, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_selector("table#resultTable tr", timeout=30000)
+                time.sleep(2)
+            except PWTimeoutError:
+                print("⚠️ #resultTable এর জন্য টাইমআউট — সাইট ধীরে সাড়া দিচ্ছে বা ব্লক করছে হয়তো।")
 
             rows = extract_tender_rows(page)
             print(f"📋 attempt {attempt}: মোট {len(rows)} টা রো পাওয়া গেছে।")
 
             if DEBUG_MODE:
-                page.screenshot(path=f"debug_screenshot_attempt{attempt}.png", full_page=True)
-                Path(f"debug_page_attempt{attempt}.html").write_text(page.content(), encoding="utf-8")
+                try:
+                    page.screenshot(path=f"debug_screenshot_attempt{attempt}.png", full_page=True)
+                    Path(f"debug_page_attempt{attempt}.html").write_text(page.content(), encoding="utf-8")
+                except Exception as e:
+                    print(f"⚠️ debug ফাইল সেভ করতে সমস্যা: {e}")
 
             if rows:
                 break
 
             if attempt < MAX_ATTEMPTS:
                 print("⚠️ ০ রো পাওয়া গেছে, কিছুক্ষণ পর আবার চেষ্টা করা হচ্ছে...")
-                time.sleep(10)
+                time.sleep(15)
 
         print(f"📋 চূড়ান্ত ফলাফল: মোট {len(rows)} টা রো পাওয়া গেছে (লিস্ট পেজ থেকে)।")
 
@@ -251,17 +241,18 @@ def main():
 
         for n, row in enumerate(new_rows, start=1):
             tender_id = row["tender_id"]
-            pdf_path = None
+            doc_price = "N/A"
+            security = "N/A"
 
-            try:
-                detail_html = fetch_detail_html(context, tender_id)
-                if DEBUG_MODE and n == 1 and detail_html:
-                    Path("debug_detail_page.html").write_text(detail_html, encoding="utf-8")
-                    print("🐞 DEBUG_MODE: debug_detail_page.html সেভ হয়েছে।")
-                if detail_html:
-                    pdf_path = download_pdf(context, detail_html, tender_id)
-            except Exception as e:
-                print(f"⚠️ ডিটেইলস/PDF প্রসেস করতে সমস্যা ({tender_id}): {e}")
+            detail_html = fetch_detail_html(context, tender_id)
+            if DEBUG_MODE and n == 1 and detail_html:
+                Path("debug_detail_page.html").write_text(detail_html, encoding="utf-8")
+                print("🐞 DEBUG_MODE: debug_detail_page.html সেভ হয়েছে।")
+
+            if detail_html:
+                fields = extract_price_fields(detail_html)
+                doc_price = fields["doc_price"]
+                security = fields["security"]
 
             msg = build_message(
                 sl_no=row["sl_no"],
@@ -270,13 +261,11 @@ def main():
                 org=row["organization"],
                 pub_date=row["pub_date"],
                 close_date=row["close_date"],
-                has_pdf=bool(pdf_path),
+                doc_price=doc_price,
+                security=security,
             )
 
             send_telegram_message(msg)
-            if pdf_path:
-                send_telegram_document(pdf_path, caption=f"Tender ID: {tender_id}")
-
             seen_ids.add(tender_id)
             time.sleep(1)
 
