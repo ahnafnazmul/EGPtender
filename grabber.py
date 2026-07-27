@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 BASE_URL = "https://www.eprocure.gov.bd"
 LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
 
-# আপনার রিকোয়েস্ট অনুযায়ী ফাইলের নাম পরিবর্তন করা হলো
+# ফাইল ট্র্যাকিং নেম
 DATA_FILE = Path(__file__).parent / "processed_tenders.json"
 MAX_SEEN_IDS = 5000 
 
@@ -62,25 +62,25 @@ def parse_detail_page(html_content):
         try: details["org"] = org_td.find_next('td').text.strip()
         except: pass
         
-    # প্রচারের তারিখ (Scheduled Tender/Proposal Publication Date and Time)
+    # প্রচারের তারিখ
     pub_td = soup.find(string=lambda text: text and "Publication" in text and "Date and Time" in text)
     if pub_td:
         try: details["publish_date"] = pub_td.find_next('td').text.strip()
         except: pass
         
-    # শেষ হবার তারিখ (Tender/Proposal Closing Date and Time)
+    # শেষ হবার তারিখ
     close_td = soup.find(string=lambda text: text and "Closing" in text and "Date and Time" in text)
     if close_td:
         try: details["closing_date"] = close_td.find_next('td').text.strip()
         except: pass
         
-    # টেন্ডার শিডিউল দাম (Tender/Proposal Document Price)
+    # টেন্ডার শিডিউল দাম
     price_td = soup.find(string=lambda text: text and "Document Price" in text)
     if price_td:
         try: details["price"] = price_td.find_next('td').text.strip()
         except: pass
         
-    # টেন্ডার সিকিউরিটি (Tender/Proposal security Amount)
+    # টেন্ডার সিকিউরিটি
     security_th = soup.find(string=lambda text: text and "security" in text and "Amount" in text)
     if security_th:
         try:
@@ -92,7 +92,6 @@ def parse_detail_page(html_content):
     return details
 
 def main():
-    # সরাসরি লিস্ট লোড করা হচ্ছে, কোনো .get() এরর আসবে না
     processed_list = load_processed_tenders()
     seen_ids = set(processed_list)
 
@@ -106,17 +105,18 @@ def main():
         
         for attempt in range(1, MAX_ATTEMPTS + 1):
             print(f"📡 মেইন লিস্ট পেজ লোড হচ্ছে (Attempt {attempt}/{MAX_ATTEMPTS})")
-            page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
-            time.sleep(5) 
-            
-            if page.locator("table#resultTable").count() > 0:
+            try:
+                page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
+                # টেবিলের ভেতরে ডাটা রো (অন্তত ২ নম্বর tr) রেন্ডার হওয়া পর্যন্ত অপেক্ষা করবে
+                page.wait_for_selector("table#resultTable tr >> nth=1", timeout=15000)
                 table_found = True
                 break
-            print("⚠️ টেবিল পাওয়া যায়নি, আবার চেষ্টা করা হচ্ছে...")
-            time.sleep(5)
+            except Exception as e:
+                print(f"⚠️ টেবিলের ডাটা রো এখনো লোড হয়নি: {e}")
+                time.sleep(5)
 
         if not table_found:
-            print("❌ ই-জিপি মেইন টেবিল লোড করা সম্ভব হয়নি।")
+            print("❌ ই-জিপি মেইন টেবিলের ডাটা লোড করা সম্ভব হয়নি।")
             browser.close()
             return
 
@@ -151,6 +151,7 @@ def main():
             print(f"🔗 ডিটেইলস পেজে ঢুকছি: Tender ID {t_id}")
             
             try:
+                # মেইন পেজে ওই টেন্ডারের লাইনের ভেতরের Title এ থাকা লিংকে ক্লিক
                 link_locator = page.locator(f"//table[@id='resultTable']//tr[td[1][text()='{item['sl_no']}'] or td[2][contains(text(),'{t_id}')]]/td[3]/a")
                 
                 if link_locator.count() > 0:
@@ -158,7 +159,7 @@ def main():
                         link_locator.first.click()
                     
                     detail_page = new_page_info.value
-                    detail_page.wait_until="networkidle" # টাইপো ফিক্স করা হয়েছে
+                    detail_page.wait_for_load_state("networkidle")
                     time.sleep(3) 
                     
                     detail_html = detail_page.content()
@@ -172,6 +173,7 @@ def main():
                 print(f"❌ স্ক্র্যাপ করতে সমস্যা হয়েছে ({t_id}): {e}")
                 extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
 
+            # আপনার দেওয়া সুনির্দিষ্ট বাংলা ফরম্যাট
             msg = (
                 f"<b>সিরিয়াল নম্বরঃ</b> {item['sl_no']}\n"
                 f"<b>টেন্ডার আইডিঃ</b> {t_id}\n"
@@ -189,7 +191,6 @@ def main():
 
         browser.close()
 
-    # লিস্ট ফরম্যাটে নতুন ফাইল সেভ করা
     save_processed_tenders(processed_list)
     print("✅ সফলভাবে রান শেষ হয়েছে এবং processed_tenders.json আপডেট করা হয়েছে।")
 
