@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 BASE_URL = "https://www.eprocure.gov.bd"
 LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
 
-STATE_FILE = Path(__file__).parent / "state.json"
+STATE_FILE = Path(__file__).parent / "processed_tenders.json"
 MAX_SEEN_IDS = 5000 
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
