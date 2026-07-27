@@ -35,14 +35,14 @@ jobs:
           DEBUG_MODE: "false"
         run: python scraper.py
 
-      - name: Upload debug artifacts (if any)
+    - name: Upload debug artifacts (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-output
           path: |
-            debug_screenshot.png
-            debug_page.html
+            debug_screenshot_attempt*.png
+            debug_page_attempt*.html
             debug_detail_page.html
           if-no-files-found: ignore
 
