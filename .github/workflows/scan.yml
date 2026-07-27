@@ -1,55 +1,44 @@
-name: eGP Tender Scanner
+"""
+eGP (eprocure.gov.bd) Tender Notification Bot
+------------------------------------------------
+- StdTenderSearch.jsp?h=t পেজ থেকে টেন্ডার লিস্ট স্ক্র্যাপ করে (Playwright দিয়ে,
+  কারণ টেবিলটা AJAX/JS দিয়ে রেন্ডার হয়, প্লেইন HTTP request কাজ করবে না)
+- state.json এ আগে পাঠানো Tender ID গুলো রাখা হয়, নতুন পাওয়া গেলে সেগুলোই পাঠানো হবে
+- প্রতিটা নতুন টেন্ডারের ডিটেইলস পেজে গিয়ে Organization/Publishing/Closing Date বের করা হয়
+  এবং "Save"/PDF ডাউনলোড লিংক খুঁজে PDF ডাউনলোড করা হয়
+- সবশেষে Telegram এ মেসেজ + PDF (থাকলে) পাঠানো হয়
 
-on:
-  schedule:
-    # প্রতি ৪ ঘন্টা পরপর (UTC সময়ে) — GitHub cron গ্যারান্টিড এক্স্যাক্ট টাইম না,
-    # কয়েক মিনিট এদিক-ওদিক হতে পারে
-    - cron: "0 */4 * * *"
-  workflow_dispatch: {}   # ম্যানুয়ালি "Run workflow" বাটন দিয়ে টেস্ট করার জন্য
+লিস্ট পেজের #resultTable কাঠামো আসল debug_page.html দেখে কনফার্ম করা হয়েছে
+(v2 আপডেট)। SL No/Tender ID/Title/Organization/Publishing/Closing Date সবই
+লিস্ট পেজ থেকে সরাসরি বের করা হয় — শুধু PDF এর জন্য ViewTender.jsp তে POST
+রিকোয়েস্ট পাঠানো হয়। PDF লিংকের প্যাটার্নটা এখনো যাচাই-বাকি (README.md দেখো)।
+"""
 
-permissions:
-  contents: write   # state.json কমিট করার জন্য দরকার
+import os
+import re
+import json
+import sys
+import time
+import requests
+from pathlib import Path
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+BASE_URL = "https://www.eprocure.gov.bd"
+LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
+VIEW_TENDER_URL = f"{BASE_URL}/resources/common/ViewTender.jsp"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+STATE_FILE = Path(__file__).parent / "state.json"
+MAX_SEEN_IDS = 5000  # state ফাইল যেন অসীম বড় না হয়ে যায়
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          playwright install --with-deps chromium
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"
 
-      - name: Run scraper
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DEBUG_MODE: "true"
-        run: python scraper.py
+DOWNLOAD_DIR = Path(__file__).parent / "downloads"
+DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-      - name: Upload debug artifacts (if any)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-output
-          path: |
-            debug_screenshot.png
-            debug_page.html
-            debug_detail_page.html
-          if-no-files-found: ignore
 
-      - name: Commit updated state.json
-        run: |
-          git config user.name "tender-bot"
-          git config user.email "tender-bot@users.noreply.github.com"
-          git add state.json
-          git diff --quiet --cached || git commit -m "chore: update seen tender state [skip ci]"
-          git push
+# ---------------------------------------------------------------------------
+# State (আগে পাঠানো Tender ID ট্র্যাক করা)
+# ---------------------------------
