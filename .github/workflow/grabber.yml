@@ -3,7 +3,7 @@ name: eGP Tender Scanner
 on:
   schedule:
     - cron: '0 */4 * * *' # প্রতি ৪ ঘণ্টা পর পর রান হবে
-  workflow_dispatch: # ইচ্ছে হলে ম্যানুয়ালিও রান করা যাবে
+  workflow_dispatch: # ম্যানুয়ালি রান করার জন্য
 
 jobs:
   scrape:
@@ -27,7 +27,7 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python scraper.py
+      run: python grabber.py # <-- এখানে scraper.py বদলে grabber.py করা হয়েছে
 
     - name: Commit and Push changes
       run: |
