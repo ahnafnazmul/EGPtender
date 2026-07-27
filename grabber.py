@@ -4,10 +4,10 @@ import time
 import requests
 from pathlib import Path
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://www.eprocure.gov.bd"
-LIST_URL = f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
+# সরাসরি ই-জিপির ইন্টারনাল ডাটা সোর্স ইউআরএল ব্যবহার করা হচ্ছে
+DATA_URL = f"{BASE_URL}/resources/common/StdTenderSearchGrid.jsp"
 
 DATA_FILE = Path(__file__).parent / "processed_tenders.json"
 MAX_SEEN_IDS = 5000 
@@ -42,8 +42,14 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-def parse_detail_page(html_content):
-    soup = BeautifulSoup(html_content, "html.parser")
+def parse_detail_page(tender_id):
+    """সরাসরি ডিটেইলস পেজে হিট করে ডাটা স্ক্র্যাপ করার ফাংশন"""
+    detail_url = f"{BASE_URL}/resources/common/TenderDetails.jsp?id={tender_id}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": BASE_URL
+    }
+    
     details = {
         "org": "N/A",
         "publish_date": "N/A",
@@ -52,150 +58,123 @@ def parse_detail_page(html_content):
         "security": "N/A"
     }
     
-    org_td = soup.find(string=lambda text: text and "Organization :" in text)
-    if org_td:
-        try: details["org"] = org_td.find_next('td').text.strip()
-        except: pass
-        
-    pub_td = soup.find(string=lambda text: text and "Publication" in text and "Date and Time" in text)
-    if pub_td:
-        try: details["publish_date"] = pub_td.find_next('td').text.strip()
-        except: pass
-        
-    close_td = soup.find(string=lambda text: text and "Closing" in text and "Date and Time" in text)
-    if close_td:
-        try: details["closing_date"] = close_td.find_next('td').text.strip()
-        except: pass
-        
-    price_td = soup.find(string=lambda text: text and "Document Price" in text)
-    if price_td:
-        try: details["price"] = price_td.find_next('td').text.strip()
-        except: pass
-        
-    security_th = soup.find(string=lambda text: text and "security" in text and "Amount" in text)
-    if security_th:
-        try:
-            row = security_th.find_parent('table').find_all('tr')[1]
-            details["security"] = row.find_all('td')[3].text.strip()
-        except:
-            pass
+    try:
+        response = requests.get(detail_url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
             
+            # অর্গানাইজেশন
+            org_td = soup.find(string=lambda text: text and "Organization :" in text)
+            if org_td:
+                try: details["org"] = org_td.find_next('td').text.strip()
+                except: pass
+                
+            # প্রচারের তারিখ
+            pub_td = soup.find(string=lambda text: text and "Publication" in text and "Date and Time" in text)
+            if pub_td:
+                try: details["publish_date"] = pub_td.find_next('td').text.strip()
+                except: pass
+                
+            # শেষ হবার তারিখ
+            close_td = soup.find(string=lambda text: text and "Closing" in text and "Date and Time" in text)
+            if close_td:
+                try: details["closing_date"] = close_td.find_next('td').text.strip()
+                except: pass
+                
+            # টেন্ডার শিডিউল দাম
+            price_td = soup.find(string=lambda text: text and "Document Price" in text)
+            if price_td:
+                try: details["price"] = price_td.find_next('td').text.strip()
+                except: pass
+                
+            # টেন্ডার সিকিউরিটি
+            security_th = soup.find(string=lambda text: text and "security" in text and "Amount" in text)
+            if security_th:
+                try:
+                    row = security_th.find_parent('table').find_all('tr')[1]
+                    details["security"] = row.find_all('td')[3].text.strip()
+                except: pass
+    except Exception as e:
+        print(f"❌ ডিটেইলস পেজ রিকোয়েস্টে ভুল হয়েছে ({tender_id}): {e}")
+        
     return details
 
 def main():
     processed_list = load_processed_tenders()
     seen_ids = set(processed_list)
 
-    with sync_playwright() as p:
-        # ব্লকিং এড়াতে অতিরিক্ত ক্রোমিয়াম আর্গুমেন্ট যুক্ত করা হয়েছে
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-setuid-sandbox",
-                "--no-sandbox"
-            ]
-        )
-        
-        # স্ক্রিন সাইজ এবং সাধারণ ইউজারের মতো রিগিং করা
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 720},
-            locale="en-US"
-        )
-        page = context.new_page()
+    # জেনুইন ব্রাউজার রিকোয়েস্ট হেডার্স
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": BASE_URL,
+        "Referer": f"{BASE_URL}/resources/common/StdTenderSearch.jsp?h=t"
+    }
 
-        MAX_ATTEMPTS = 3
-        table_found = False
-        
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            print(f"📡 মেইন লিস্ট পেজ লোড হচ্ছে (Attempt {attempt}/{MAX_ATTEMPTS})")
-            try:
-                # পেজ ওপেন করে ১০ সেকেন্ডের একটা সলিড হোল্ড দেওয়া
-                page.goto(LIST_URL, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(10)
-                
-                # টেবিলটি লোড হতে সময় দেওয়া
-                page.wait_for_selector("table#resultTable", timeout=20000)
-                table_found = True
-                break
-            except Exception as e:
-                print(f"⚠️ টেবিল লোড হতে সমস্যা হয়েছে: {e}")
-                time.sleep(5)
+    # ই-জিপির ডাটা গ্রিড লোড করার প্রয়োজনীয় ডাটা প্যারামিটার
+    payload = {
+        "rows": "50",      # একবারে ৫০টি টেন্ডার টানবে
+        "page": "1",
+        "sidx": "1",
+        "sord": "desc"
+    }
 
-        if not table_found:
-            print("❌ ই-জিপি মেইন টেবিলটি পেজে খুঁজে পাওয়া যায়নি (সম্ভবত আইপি বা বটের কারণে পেজ ব্লক করেছে)।")
-            browser.close()
+    print("📡 ই-জিপি ডাটা সার্ভার থেকে সরাসরি টেন্ডার লিস্ট আনা হচ্ছে...")
+    try:
+        response = requests.post(DATA_URL, headers=headers, data=payload, timeout=30)
+        if response.status_code != 200:
+            print(f"❌ ই-জিপি সার্ভার রেসপন্স করেনি। স্ট্যাটাস কোড: {response.status_code}")
             return
-
-        html = page.content()
-        soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table", id="resultTable")
-        trs = table.find_all("tr")[1:] if table else []
-
-        tenders_to_process = []
-        for tr in trs:
-            tds = tr.find_all("td")
-            if len(tds) < 6: continue
             
-            id_cell_lines = [x.strip() for x in tds[1].get_text(separator="|").split("|") if x.strip()]
-            tender_id = id_cell_lines[0] if id_cell_lines else None
+        soup = BeautifulSoup(response.text, "html.parser")
+        trs = soup.find_all("tr")[1:] # হেডার বাদ দিয়ে
+    except Exception as e:
+        print(f"❌ ডাটা রিকোয়েস্ট পাঠাতে সমস্যা হয়েছে: {e}")
+        return
+
+    tenders_to_process = []
+    for tr in trs:
+        tds = tr.find_all("td")
+        if len(tds) < 6: continue
+        
+        id_cell_lines = [x.strip() for x in tds[1].get_text(separator="|").split("|") if x.strip()]
+        tender_id = id_cell_lines[0] if id_cell_lines else None
+        
+        if tender_id and tender_id.isdigit() and tender_id not in seen_ids:
+            sl_no = tds[0].get_text(strip=True)
+            title_cell_lines = [x.strip() for x in tds[2].get_text(separator="|").split("|") if x.strip()]
+            title_text = title_cell_lines[-1] if len(title_cell_lines) > 1 else "N/A"
             
-            if tender_id and tender_id.isdigit() and tender_id not in seen_ids:
-                sl_no = tds[0].get_text(strip=True)
-                title_cell_lines = [x.strip() for x in tds[2].get_text(separator="|").split("|") if x.strip()]
-                title_text = title_cell_lines[-1] if len(title_cell_lines) > 1 else "N/A"
-                
-                tenders_to_process.append({
-                    "sl_no": sl_no,
-                    "tender_id": tender_id,
-                    "title": title_text
-                })
+            tenders_to_process.append({
+                "sl_no": sl_no,
+                "tender_id": tender_id,
+                "title": title_text
+            })
 
-        print(f"🆕 প্রসেস করার মতো নতুন টেন্ডার পাওয়া গেছে: {len(tenders_to_process)} টি।")
+    print(f"🆕 প্রসেস করার মতো নতুন টেন্ডার পাওয়া গেছে: {len(tenders_to_process)} টি।")
 
-        for item in tenders_to_process:
-            t_id = item["tender_id"]
-            print(f"🔗 ডিটেইলস পেজে ঢুকছি: Tender ID {t_id}")
-            
-            try:
-                link_locator = page.locator(f"//table[@id='resultTable']//tr[td[1][text()='{item['sl_no']}'] or td[2][contains(text(),'{t_id}')]]/td[3]/a")
-                
-                if link_locator.count() > 0:
-                    with context.expect_page() as new_page_info:
-                        link_locator.first.click()
-                    
-                    detail_page = new_page_info.value
-                    detail_page.wait_for_load_state("domcontentloaded")
-                    time.sleep(5) 
-                    
-                    detail_html = detail_page.content()
-                    extra_info = parse_detail_page(detail_html)
-                    detail_page.close()
-                else:
-                    print(f"⚠️ টেন্ডার {t_id} এর লিংক খুঁজে পাওয়া যায়নি।")
-                    extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
-            
-            except Exception as e:
-                print(f"❌ স্ক্র্যাপ করতে সমস্যা হয়েছে ({t_id}): {e}")
-                extra_info = {"org": "N/A", "publish_date": "N/A", "closing_date": "N/A", "price": "N/A", "security": "N/A"}
+    for item in tenders_to_process:
+        t_id = item["tender_id"]
+        print(f"🔗 ডিটেইলস ডাটা সংগ্রহ করা হচ্ছে: Tender ID {t_id}")
+        
+        # সরাসরি আইডি দিয়ে ডিটেইলস স্ক্র্যাপ করা হচ্ছে
+        extra_info = parse_detail_page(t_id)
 
-            msg = (
-                f"<b>সিরিয়াল নম্বরঃ</b> {item['sl_no']}\n"
-                f"<b>টেন্ডার আইডিঃ</b> {t_id}\n"
-                f"<b>টাইটেলঃ</b> {item['title']}\n"
-                f"<b>অর্গানাইজেশনঃ</b> {extra_info['org']}\n"
-                f"<b>প্রচারের তারিখঃ</b> {extra_info['publish_date']}\n"
-                f"<b>শেষ হবার তারিখঃ</b> {extra_info['closing_date']}\n"
-                f"<b>টেন্ডার শিডিউল দামঃ</b> {extra_info['price']}\n"
-                f"<b>টেন্ডার সিকিউরিটিঃ</b> {extra_info['security']}\n"
-            )
+        msg = (
+            f"<b>সিরিয়াল নম্বরঃ</b> {item['sl_no']}\n"
+            f"<b>টেন্ডার আইডিঃ</b> {t_id}\n"
+            f"<b>টাইটেলঃ</b> {item['title']}\n"
+            f"<b>অর্গানাইজেশনঃ</b> {extra_info['org']}\n"
+            f"<b>প্রচারের তারিখঃ</b> {extra_info['publish_date']}\n"
+            f"<b>শেষ হবার তারিখঃ</b> {extra_info['closing_date']}\n"
+            f"<b>টেন্ডার শিডিউল দামঃ</b> {extra_info['price']}\n"
+            f"<b>টেন্ডার সিকিউরিটিঃ</b> {extra_info['security']}\n"
+        )
 
-            send_telegram_message(msg)
-            processed_list.append(t_id)
-            time.sleep(3) 
-
-        browser.close()
+        send_telegram_message(msg)
+        processed_list.append(t_id)
+        time.sleep(2) 
 
     save_processed_tenders(processed_list)
     print("✅ সফলভাবে রান শেষ হয়েছে এবং processed_tenders.json আপডেট করা হয়েছে।")
