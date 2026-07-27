@@ -4,14 +4,9 @@ eGP (eprocure.gov.bd) Tender Notification Bot
 - StdTenderSearch.jsp?h=t পেজ থেকে টেন্ডার লিস্ট স্ক্র্যাপ করে (Playwright দিয়ে,
   কারণ টেবিলটা AJAX/JS দিয়ে রেন্ডার হয়, প্লেইন HTTP request কাজ করবে না)
 - state.json এ আগে পাঠানো Tender ID গুলো রাখা হয়, নতুন পাওয়া গেলে সেগুলোই পাঠানো হবে
-- প্রতিটা নতুন টেন্ডারের ডিটেইলস পেজে গিয়ে Organization/Publishing/Closing Date বের করা হয়
-  এবং "Save"/PDF ডাউনলোড লিংক খুঁজে PDF ডাউনলোড করা হয়
+- প্রতিটা নতুন টেন্ডারের ডিটেইলস পেজে গিয়ে PDF ডাউনলোড লিংক খুঁজে PDF ডাউনলোড করা হয়
 - সবশেষে Telegram এ মেসেজ + PDF (থাকলে) পাঠানো হয়
-
-লিস্ট পেজের #resultTable কাঠামো আসল debug_page.html দেখে কনফার্ম করা হয়েছে
-(v2 আপডেট)। SL No/Tender ID/Title/Organization/Publishing/Closing Date সবই
-লিস্ট পেজ থেকে সরাসরি বের করা হয় — শুধু PDF এর জন্য ViewTender.jsp তে POST
-রিকোয়েস্ট পাঠানো হয়। PDF লিংকের প্যাটার্নটা এখনো যাচাই-বাকি (README.md দেখো)।
+- v3: লিস্ট পেজে ০ রো পেলে ৩ বার পর্যন্ত রিট্রাই করবে (সাইটের সাময়িক গ্লিচ সামলাতে)
 """
 
 import os
@@ -39,9 +34,6 @@ DOWNLOAD_DIR = Path(__file__).parent / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# State (আগে পাঠানো Tender ID ট্র্যাক করা)
-# ---------------------------------------------------------------------------
 def load_state():
     if STATE_FILE.exists():
         try:
@@ -52,39 +44,13 @@ def load_state():
 
 
 def save_state(state):
-    # সবচেয়ে পুরনো আইডি ছেঁটে ফেলা, ফাইল ছোট রাখার জন্য
     state["seen_ids"] = state["seen_ids"][-MAX_SEEN_IDS:]
     STATE_FILE.write_text(
         json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-# ---------------------------------------------------------------------------
-# লিস্ট পেজ থেকে টেন্ডার রো গুলো বের করা (BeautifulSoup, আসল #resultTable
-# দেখে যাচাই করা selector)
-# ---------------------------------------------------------------------------
 def extract_tender_rows(page):
-    """
-    #resultTable থেকে প্রতিটা রো বের করে dict এ রাখে:
-    {sl_no, tender_id, ref_no, status, nature, title, organization, pub_date, close_date}
-
-    আসল debug_page.html দেখে কনফার্ম করা structure:
-      <table id="resultTable">
-        <tr> ... <th> ... </tr>            # হেডার রো (স্কিপ করতে হবে)
-        <tr class="bgColor-white/Green">
-          <td>S.No.</td>
-          <td>TenderID,<br>RefNo,<br>Status</td>
-          <td>Nature,<br><form id="viewtenderform_N">...<a onclick="...form_N...submit()">Title</a></form></td>
-          <td>Ministry,<br>...,<br>PE</td>
-          <td>Type,<br>Method</td>
-          <td>PubDate,<br>CloseDate</td>
-        </tr>
-        ...
-    Title-এ ক্লিক করলে নতুন ট্যাবে POST হয় /resources/common/ViewTender.jsp
-    এ id=<tender_id>&h=t সহ (href="javascript:void(0)", আসল সাবমিশন hidden
-    ফর্ম দিয়ে)। তাই আমরা সেই id-টাই বের করে রাখি, পরে সরাসরি POST
-    রিকোয়েস্ট দিয়ে ডিটেইলস পেজ আনবো (নেভিগেট করার দরকার নেই)।
-    """
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", id="resultTable")
@@ -98,7 +64,7 @@ def extract_tender_rows(page):
     for tr in trs:
         tds = tr.find_all("td")
         if len(tds) < 6:
-            continue  # হেডার রো (th দিয়ে) বা অন্য কিছু, স্কিপ
+            continue
 
         sl_no = tds[0].get_text(strip=True)
 
@@ -138,16 +104,10 @@ def extract_tender_rows(page):
     return rows_data
 
 
-# ---------------------------------------------------------------------------
-# ডিটেইলস পেজ (ViewTender.jsp) থেকে PDF লিংক বের করা — সরাসরি POST রিকোয়েস্ট
-# দিয়ে, ব্রাউজার নেভিগেশনের দরকার নেই (form action="/resources/common/
-# ViewTender.jsp", method POST, params: id, h=t)
-# ---------------------------------------------------------------------------
 PDF_KEYWORDS = ("pdf", "report", "print", "save", "download", "export")
 
 
 def fetch_detail_html(context, tender_id):
-    """POST করে ViewTender.jsp এর HTML রেসপন্স ফেরত দেয় (স্ট্রিং)।"""
     resp = context.request.post(
         VIEW_TENDER_URL,
         form={"id": tender_id, "h": "t"},
@@ -160,11 +120,6 @@ def fetch_detail_html(context, tender_id):
 
 
 def find_pdf_url(detail_html):
-    """
-    ডিটেইলস পেজের HTML থেকে PDF/Save/Print/Report লিংক বা ফর্ম-অ্যাকশন খুঁজে
-    একটা candidate URL রিটার্ন করে (list, priority অনুযায়ী — প্রথমটা try
-    করে যদি PDF না হয় পরের গুলো try করা হয় download_pdf() এ)।
-    """
     soup = BeautifulSoup(detail_html, "html.parser")
     candidates = []
 
@@ -176,7 +131,6 @@ def find_pdf_url(detail_html):
         if any(k in href.lower() for k in PDF_KEYWORDS) or any(k in text for k in PDF_KEYWORDS):
             candidates.append(href if href.startswith("http") else BASE_URL + href)
 
-    # কিছু সাইটে Save/Print একটা <form action="..."> POST দিয়ে হয়
     for form in soup.find_all("form", action=True):
         action = form["action"].strip()
         if any(k in action.lower() for k in PDF_KEYWORDS):
@@ -188,7 +142,6 @@ def find_pdf_url(detail_html):
 
 
 def download_pdf(context, detail_html, tender_id):
-    """candidate URL গুলো try করে, যেটা আসলে PDF রেসপন্স দেয় সেটা সেভ করে।"""
     candidates = find_pdf_url(detail_html)
     for url in candidates:
         try:
@@ -207,9 +160,6 @@ def download_pdf(context, detail_html, tender_id):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Telegram
-# ---------------------------------------------------------------------------
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID সেট করা নেই।")
@@ -259,9 +209,6 @@ def build_message(sl_no, tender_id, title, org, pub_date, close_date, has_pdf):
     )
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main():
     state = load_state()
     seen_ids = set(state.get("seen_ids", []))
@@ -276,17 +223,28 @@ def main():
         )
         page = context.new_page()
 
-        print(f"📡 লিস্ট পেজ লোড হচ্ছে: {LIST_URL}")
-        page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
-        time.sleep(2)  # কিছু AJAX কলের জন্য বাড়তি সময়
+        MAX_ATTEMPTS = 3
+        rows = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            print(f"📡 লিস্ট পেজ লোড হচ্ছে (attempt {attempt}/{MAX_ATTEMPTS}): {LIST_URL}")
+            page.goto(LIST_URL, wait_until="networkidle", timeout=60000)
+            time.sleep(3)
 
-        if DEBUG_MODE:
-            page.screenshot(path="debug_screenshot.png", full_page=True)
-            Path("debug_page.html").write_text(page.content(), encoding="utf-8")
-            print("🐞 DEBUG_MODE: debug_screenshot.png ও debug_page.html সেভ হয়েছে।")
+            rows = extract_tender_rows(page)
+            print(f"📋 attempt {attempt}: মোট {len(rows)} টা রো পাওয়া গেছে।")
 
-        rows = extract_tender_rows(page)
-        print(f"📋 মোট {len(rows)} টা রো পাওয়া গেছে (লিস্ট পেজ থেকে)।")
+            if DEBUG_MODE:
+                page.screenshot(path=f"debug_screenshot_attempt{attempt}.png", full_page=True)
+                Path(f"debug_page_attempt{attempt}.html").write_text(page.content(), encoding="utf-8")
+
+            if rows:
+                break
+
+            if attempt < MAX_ATTEMPTS:
+                print("⚠️ ০ রো পাওয়া গেছে, কিছুক্ষণ পর আবার চেষ্টা করা হচ্ছে...")
+                time.sleep(10)
+
+        print(f"📋 চূড়ান্ত ফলাফল: মোট {len(rows)} টা রো পাওয়া গেছে (লিস্ট পেজ থেকে)।")
 
         new_rows = [r for r in rows if r["tender_id"] not in seen_ids]
         print(f"🆕 নতুন টেন্ডার: {len(new_rows)} টা।")
@@ -299,7 +257,7 @@ def main():
                 detail_html = fetch_detail_html(context, tender_id)
                 if DEBUG_MODE and n == 1 and detail_html:
                     Path("debug_detail_page.html").write_text(detail_html, encoding="utf-8")
-                    print("🐞 DEBUG_MODE: debug_detail_page.html সেভ হয়েছে (প্রথম নতুন টেন্ডারের ডিটেইলস পেজ)।")
+                    print("🐞 DEBUG_MODE: debug_detail_page.html সেভ হয়েছে।")
                 if detail_html:
                     pdf_path = download_pdf(context, detail_html, tender_id)
             except Exception as e:
@@ -320,7 +278,7 @@ def main():
                 send_telegram_document(pdf_path, caption=f"Tender ID: {tender_id}")
 
             seen_ids.add(tender_id)
-            time.sleep(1)  # Telegram rate limit এড়াতে
+            time.sleep(1)
 
         browser.close()
 
