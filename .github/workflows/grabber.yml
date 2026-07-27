@@ -1,4 +1,4 @@
-name: eGP Tender Scanner
+name: eGP Tender grabber
 
 on:
   schedule:
