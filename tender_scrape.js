@@ -1,4 +1,4 @@
-// eprocure.gov.bd থেকে ই-টেন্ডার নোটিশ স্ক্র্যাপ করে AllJobs ডিজাইনে HD ব্যানার তৈরি করে Telegram এ পাঠায়
+// eprocure.gov.bd থেকে ই-টেন্ডার নোটিশ স্ক্র্যাপ করে AllJobs ডিজাইনে HD বাংলা ব্যানার তৈরি করে Telegram এ পাঠায়
 
 const fs = require("fs");
 const path = require("path");
@@ -16,7 +16,7 @@ const COLOR_THEMES = [
   { primary: "#4c1d95", watermark: "#f59e0b" }  // Deep Violet
 ];
 
-// ---------- ইউটিলিটি ----------
+// ---------- ইউটিলিটি ও অনুবাদ ফাংশন ----------
 
 function loadSentIds() {
   try {
@@ -47,6 +47,21 @@ function convertToBanglaDigitsAndMonths(text) {
     str = str.replace(reg, months[enM]);
   });
   return str.replace(/[0-9]/g, w => digits[w]);
+}
+
+// ইংরেজি থেকে বাংলা অটোমেটিক ট্রান্সলেটর (Google Translate API)
+async function translateToBangla(text) {
+  if (!text || text === "N/A") return text;
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=bn&dt=t&q=${encodeURIComponent(text)}`;
+    const res = await axios.get(url);
+    if (res.data && res.data[0]) {
+      return res.data[0].map(item => item[0]).join('');
+    }
+  } catch (err) {
+    console.error("অনুবাদে ত্রুটি:", err.message);
+  }
+  return text; // অনুবাদ ব্যর্থ হলে মূল টেক্সট থাকবে
 }
 
 // সংখ্যাকে বাংলায় কথায় রূপান্তর করার ফাংশন
@@ -178,12 +193,12 @@ async function fetchTendersAndDetails(browser) {
                 const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
 
                 // Organization
-                if (text.includes("Organization :") || text === "Organization") {
+                if (text === "Organization :" || text === "Organization") {
                   if (allCells[i + 1]) orgName = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
                 }
 
-                // Procuring Entity District
-                if (text.includes("Procuring Entity District") || text.includes("District :")) {
+                // Procuring Entity District (নিখুঁতভাবে জেলা সংগ্রহ)
+                if (text.includes("Procuring Entity District")) {
                   if (allCells[i + 1]) district = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
                 }
 
@@ -241,10 +256,14 @@ async function fetchTendersAndDetails(browser) {
               return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate };
             });
 
+            // বাংলা অনুবাদের প্রক্রিয়া
+            tender.orgNameBn = await translateToBangla(details.orgName);
+            tender.titleBn = await translateToBangla(tender.title);
+            tender.districtBn = await translateToBangla(details.district);
+            tender.natureBn = await translateToBangla(details.nature);
+
             tender.orgName = details.orgName;
-            tender.district = details.district;
             tender.appId = details.appId;
-            tender.nature = details.nature;
             tender.docPrice = details.docPrice;
             tender.securityAmount = details.securityAmount;
             tender.pubDate = details.pubDate;
@@ -330,29 +349,27 @@ async function generateTenderImage(browser, tender) {
         z-index: 1;
       }
 
+      /* হেডারের নতুন ডিজাইন */
       .header-box {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 16px 20px;
+        padding: 18px 20px 14px 20px;
         z-index: 2;
       }
-      .header-title-bn {
-        font-size: 32px;
-        font-weight: 800;
-        margin: 0;
-      }
-      .header-title-sub {
-        font-size: 20px;
-        font-weight: 700;
-        opacity: 0.95;
-        margin-top: 4px;
-      }
       .header-org-name {
-        font-size: 18px;
+        font-size: 32px;
+        font-weight: 900;
+        color: #ffffff;
+        line-height: 1.2;
+        margin-bottom: 6px;
+      }
+      .header-title-bn {
+        font-size: 22px;
         font-weight: 700;
         color: #f1f5f9;
-        margin-top: 3px;
+        opacity: 0.95;
+        letter-spacing: 0.5px;
       }
 
       .content-body {
@@ -478,9 +495,8 @@ async function generateTenderImage(browser, tender) {
     <div class="watermark">FNF COMPUTER & ONLINE SERVICES</div>
 
     <div class="header-box">
-      <div class="header-title-bn">নতুন ই-টেন্ডার নোটিশ (e-GP)</div>
-      <div class="header-title-sub">Tender ID: ${tender.id}</div>
-      <div class="header-org-name">${tender.orgName}</div>
+      <div class="header-org-name">${tender.orgNameBn}</div>
+      <div class="header-title-bn">ই-টেন্ডার নোটিশ (e-GP)</div>
     </div>
 
     <div class="content-body">
@@ -498,22 +514,22 @@ async function generateTenderImage(browser, tender) {
         <div class="info-item">
           <span class="info-icon">🏢</span>
           <span class="info-label">দপ্তর:</span>
-          <span class="info-val">${tender.orgName}</span>
+          <span class="info-val">${tender.orgNameBn}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📍</span>
           <span class="info-label">এলাকা:</span>
-          <span class="info-val">${tender.district}</span>
+          <span class="info-val">${tender.districtBn}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">🏗️</span>
-          <span class="info-label">কাজের বিবরন:</span>
-          <span class="info-val">${tender.title}</span>
+          <span class="info-label">কাজের বিবরণ:</span>
+          <span class="info-val">${tender.titleBn}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📌</span>
           <span class="info-label">কাজের ধরন:</span>
-          <span class="info-val">${tender.nature}</span>
+          <span class="info-val">${tender.natureBn}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">💵</span>
@@ -585,12 +601,12 @@ function formatTenderMessage(tender) {
   return [
     `📢 *নতুন ই-টেন্ডার নোটিশ (e-GP)*`,
     ``,
+    `🏢 *দপ্তর:* ${tender.orgNameBn}`,
     `🆔 *টেন্ডার আইডি:* \`${tender.id}\``,
     `🔢 *এপপ আইডি:* ${tender.appId}`,
-    `🏢 *দপ্তর:* ${tender.orgName}`,
-    `📍 *এলাকা:* ${tender.district}`,
-    `🏗️ *কাজের বিবরন:* ${tender.title}`,
-    `📌 *কাজের ধরন:* ${tender.nature}`,
+    `📍 *এলাকা:* ${tender.districtBn}`,
+    `🏗️ *কাজের বিবরণ:* ${tender.titleBn}`,
+    `📌 *কাজের ধরন:* ${tender.natureBn}`,
     `💵 *শিডিউল এর দাম:* ${docPriceDisplay}`,
     `🛡️ *সিকিউরিটি এমাউন্ট:* ${securityDisplay}`,
     `📅 *প্রকাশের তারিখ:* ${tender.pubDate}`,
