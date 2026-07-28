@@ -49,6 +49,48 @@ function convertToBanglaDigitsAndMonths(text) {
   return str.replace(/[0-9]/g, w => digits[w]);
 }
 
+// সংখ্যাকে বাংলায় কথায় রূপান্তর করার ফাংশন
+function numberToBanglaWords(amountStr) {
+  if (!amountStr || isNaN(amountStr) || amountStr === "N/A") return "";
+  let num = parseInt(amountStr, 10);
+  if (num === 0) return "";
+
+  const ones = ["", "এক", "দুই", "তিন", "চার", "পাঁচ", "ছয়", "সাত", "আট", "নয়", "দশ", 
+                "এগারো", "বারো", "তেরো", "চৌদ্দ", "পোনেরো", "ষোল", "সতেরো", "১৮", "উনিশ", "বিশ", 
+                "একুশ", "বাইশ", "তেইশ", "চব্বিশ", "পঁচিশ", "ছাব্বিশ", "সাতাশ", "আটাশ", "উনত্রিশ", "ত্রিশ", 
+                "একত্রিশ", "বত্রিশ", "তেরিশ", "চৌত্রিশ", "পঁয়ত্রিশ", "ছত্রিশ", "সাইত্রিশ", "আটত্রিশ", "উনচল্লিশ", "চল্লিশ", 
+                "একচল্লিশ", "বায়াল্লিশ", "তেতাল্লিশ", "চৌয়াল্লিশ", "পঁয়তাল্লিশ", "ছেচল্লিশ", "সাতচল্লিশ", "আটচল্লিশ", "উনপঞ্চাশ", "পঞ্চাশ", 
+                "একান্ন", "বায়ান্ন", "তিরিপান্ন", "চৌয়ান্ন", "পঁচান্ন", "ছাপ্পান্ন", "সাতান্ন", "আটান্ন", "উনষাট", "ষাট", 
+                "একষট্টি", "বাষট্টি", "তেষট্টি", "চৌষট্টি", "পঁয়ষট্টি", "ছেষট্টি", "সাতষট্টি", "আটষট্টি", "উনসত্তর", "সত্তর", 
+                "একাত্তর", "বাহাত্তর", "তিয়াত্তর", "চৌহাত্তর", "পঁচাত্তর", "ছিয়াত্তর", "সাতাত্তর", "আটাত্তর", "উনাশি", "আশি", 
+                "একাসি", "বিরাশি", "তিরাশি", "চৌরাশি", "পঁচাসি", "ছিয়াশি", "সাতাসি", "আটাসি", "উনানব্বই", "নব্বই", 
+                "একানব্বই", "বিরানব্বই", "তিরা নব্বই", "চৌরানব্বই", "পঁচানব্বই", "ছিয়ানব্বই", "সাতানব্বই", "আটানব্বই", "নিরানব্বই"];
+
+  let words = "";
+
+  if (Math.floor(num / 10000000) > 0) {
+    words += numberToBanglaWords(Math.floor(num / 10000000).toString()) + " কোটি ";
+    num %= 10000000;
+  }
+  if (Math.floor(num / 100000) > 0) {
+    words += ones[Math.floor(num / 100000)] + " লাখ ";
+    num %= 100000;
+  }
+  if (Math.floor(num / 1000) > 0) {
+    words += ones[Math.floor(num / 1000)] + " হাজার ";
+    num %= 1000;
+  }
+  if (Math.floor(num / 100) > 0) {
+    words += ones[Math.floor(num / 100)] + " শত ";
+    num %= 100;
+  }
+  if (num > 0) {
+    words += ones[num] + " ";
+  }
+
+  return words.trim() + " টাকা";
+}
+
 // ---------- e-GP স্ক্র্যাপিং (Puppeteer দিয়ে) ----------
 
 async function fetchTendersAndDetails(browser) {
@@ -71,7 +113,6 @@ async function fetchTendersAndDetails(browser) {
 
         const col1Text = cols[1].innerText.trim();
         const col2Text = cols[2].innerText.trim();
-        const col3Text = cols[3].innerText.trim();
 
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
@@ -81,7 +122,8 @@ async function fetchTendersAndDetails(browser) {
             rowIndex: index,
             id: tenderId,
             title: col2Text.replace(/\n/g, ' '),
-            peName: col3Text.replace(/\n/g, ' '),
+            orgName: "N/A",
+            district: "N/A",
             appId: "N/A",
             nature: "N/A",
             docPrice: "N/A",
@@ -121,6 +163,8 @@ async function fetchTendersAndDetails(browser) {
             await new Promise(r => setTimeout(r, 1000));
 
             const details = await detailPage.evaluate(() => {
+              let orgName = "N/A";
+              let district = "N/A";
               let appId = "N/A";
               let nature = "N/A";
               let docPrice = "N/A";
@@ -132,6 +176,16 @@ async function fetchTendersAndDetails(browser) {
 
               for (let i = 0; i < allCells.length; i++) {
                 const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
+
+                // Organization
+                if (text.includes("Organization :") || text === "Organization") {
+                  if (allCells[i + 1]) orgName = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                }
+
+                // Procuring Entity District
+                if (text.includes("Procuring Entity District") || text.includes("District :")) {
+                  if (allCells[i + 1]) district = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                }
 
                 // APP ID
                 if (text.includes("APP ID") || text.includes("App ID")) {
@@ -184,9 +238,11 @@ async function fetchTendersAndDetails(browser) {
                 }
               }
 
-              return { appId, nature, docPrice, securityAmount, pubDate, lastDate };
+              return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate };
             });
 
+            tender.orgName = details.orgName;
+            tender.district = details.district;
             tender.appId = details.appId;
             tender.nature = details.nature;
             tender.docPrice = details.docPrice;
@@ -218,7 +274,7 @@ async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  await page.setViewport({ width: 800, height: 920, deviceScaleFactor: 2 });
+  await page.setViewport({ width: 800, height: 980, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
   const appIdBn = convertToBanglaDigitsAndMonths(tender.appId);
@@ -226,6 +282,13 @@ async function generateTenderImage(browser, tender) {
   const securityBn = convertToBanglaDigitsAndMonths(tender.securityAmount);
   const pubDateBn = convertToBanglaDigitsAndMonths(tender.pubDate);
   const lastDateBn = convertToBanglaDigitsAndMonths(tender.lastDate);
+
+  // টাকায় কথায় বের করা
+  const docPriceWords = numberToBanglaWords(tender.docPrice);
+  const securityWords = numberToBanglaWords(tender.securityAmount);
+
+  const docPriceDisplay = docPriceWords ? `${docPriceBn} ৳ (${docPriceWords})` : `${docPriceBn} ৳`;
+  const securityDisplay = securityWords ? `${securityBn} ৳ (${securityWords})` : `${securityBn} ৳`;
 
   const theme = COLOR_THEMES[Math.floor(Math.random() * COLOR_THEMES.length)];
 
@@ -240,7 +303,7 @@ async function generateTenderImage(browser, tender) {
       * { box-sizing: border-box; }
       body {
         width: 800px;
-        height: 920px;
+        height: 980px;
         margin: 0;
         padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
@@ -271,23 +334,29 @@ async function generateTenderImage(browser, tender) {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 14px 20px;
+        padding: 16px 20px;
         z-index: 2;
       }
       .header-title-bn {
-        font-size: 30px;
+        font-size: 32px;
         font-weight: 800;
         margin: 0;
       }
       .header-title-sub {
-        font-size: 19px;
+        font-size: 20px;
         font-weight: 700;
-        opacity: 0.9;
-        margin-top: 2px;
+        opacity: 0.95;
+        margin-top: 4px;
+      }
+      .header-org-name {
+        font-size: 18px;
+        font-weight: 700;
+        color: #f1f5f9;
+        margin-top: 3px;
       }
 
       .content-body {
-        padding: 12px 30px;
+        padding: 18px 35px;
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -298,23 +367,23 @@ async function generateTenderImage(browser, tender) {
       .info-list {
         display: flex;
         flex-direction: column;
-        gap: 9px;
+        gap: 12px;
       }
 
       .info-item {
         display: flex;
         align-items: flex-start;
-        font-size: 19px;
+        font-size: 21px;
         color: #0f172a;
         font-weight: 700;
-        line-height: 1.3;
+        line-height: 1.35;
       }
 
       .info-icon {
-        font-size: 20px;
-        width: 32px;
+        font-size: 22px;
+        width: 34px;
         text-align: center;
-        margin-right: 6px;
+        margin-right: 8px;
         flex-shrink: 0;
       }
 
@@ -333,7 +402,7 @@ async function generateTenderImage(browser, tender) {
 
       /* Compact AllJobs Style Footer */
       .footer-container {
-        padding: 0 20px 16px 20px;
+        padding: 0 25px 20px 25px;
         z-index: 2;
       }
 
@@ -347,9 +416,9 @@ async function generateTenderImage(browser, tender) {
       .footer-top-banner {
         background-color: #ffffff;
         color: ${theme.primary};
-        font-size: 17px;
+        font-size: 18px;
         font-weight: 800;
-        padding: 4px 10px;
+        padding: 5px 10px;
         text-align: center;
         border-bottom: 2px solid ${theme.primary};
       }
@@ -357,7 +426,7 @@ async function generateTenderImage(browser, tender) {
       .footer-main-body {
         background-color: ${theme.primary};
         color: #ffffff;
-        padding: 8px 12px;
+        padding: 10px 15px;
         text-align: center;
       }
 
@@ -365,7 +434,7 @@ async function generateTenderImage(browser, tender) {
         font-size: 34px;
         font-weight: 900;
         line-height: 1.1;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
         letter-spacing: -0.5px;
         white-space: nowrap;
       }
@@ -373,7 +442,8 @@ async function generateTenderImage(browser, tender) {
       .footer-bottom-row {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: center;
+        gap: 30px;
         padding: 0 5px;
       }
 
@@ -381,7 +451,7 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         gap: 5px;
-        font-size: 20px;
+        font-size: 21px;
         font-weight: 800;
       }
 
@@ -410,6 +480,7 @@ async function generateTenderImage(browser, tender) {
     <div class="header-box">
       <div class="header-title-bn">নতুন ই-টেন্ডার নোটিশ (e-GP)</div>
       <div class="header-title-sub">Tender ID: ${tender.id}</div>
+      <div class="header-org-name">${tender.orgName}</div>
     </div>
 
     <div class="content-body">
@@ -427,7 +498,12 @@ async function generateTenderImage(browser, tender) {
         <div class="info-item">
           <span class="info-icon">🏢</span>
           <span class="info-label">দপ্তর:</span>
-          <span class="info-val">${tender.peName}</span>
+          <span class="info-val">${tender.orgName}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-icon">📍</span>
+          <span class="info-label">এলাকা:</span>
+          <span class="info-val">${tender.district}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">🏗️</span>
@@ -442,12 +518,12 @@ async function generateTenderImage(browser, tender) {
         <div class="info-item">
           <span class="info-icon">💵</span>
           <span class="info-label">শিডিউল এর দাম:</span>
-          <span class="info-val">${docPriceBn} ৳</span>
+          <span class="info-val">${docPriceDisplay}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">🛡️</span>
           <span class="info-label">সিকিউরিটি এমাউন্ট:</span>
-          <span class="info-val">${securityBn} ৳</span>
+          <span class="info-val">${securityDisplay}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📅</span>
@@ -500,16 +576,23 @@ async function generateTenderImage(browser, tender) {
 // ---------- টেলিগ্রামে পাঠানো ----------
 
 function formatTenderMessage(tender) {
+  const docPriceWords = numberToBanglaWords(tender.docPrice);
+  const securityWords = numberToBanglaWords(tender.securityAmount);
+
+  const docPriceDisplay = docPriceWords ? `${tender.docPrice} BDT (${docPriceWords})` : `${tender.docPrice} BDT`;
+  const securityDisplay = securityWords ? `${tender.securityAmount} BDT (${securityWords})` : `${tender.securityAmount} BDT`;
+
   return [
     `📢 *নতুন ই-টেন্ডার নোটিশ (e-GP)*`,
     ``,
     `🆔 *টেন্ডার আইডি:* \`${tender.id}\``,
     `🔢 *এপপ আইডি:* ${tender.appId}`,
-    `🏢 *দপ্তর:* ${tender.peName}`,
+    `🏢 *দপ্তর:* ${tender.orgName}`,
+    `📍 *এলাকা:* ${tender.district}`,
     `🏗️ *কাজের বিবরন:* ${tender.title}`,
     `📌 *কাজের ধরন:* ${tender.nature}`,
-    `💵 *শিডিউল এর দাম:* ${tender.docPrice} BDT`,
-    `🛡️ *সিকিউরিটি এমাউন্ট:* ${tender.securityAmount} BDT`,
+    `💵 *শিডিউল এর দাম:* ${docPriceDisplay}`,
+    `🛡️ *সিকিউরিটি এমাউন্ট:* ${securityDisplay}`,
     `📅 *প্রকাশের তারিখ:* ${tender.pubDate}`,
     `⏰ *জমাদানের শেষ তারিখ:* ${tender.lastDate}`,
     ``,
