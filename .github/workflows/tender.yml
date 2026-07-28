@@ -19,12 +19,16 @@ jobs:
         with:
           node-version: '18'
 
+      # এই নতুন স্টেপটি যোগ করা হয়েছে Chrome ইন্সটল করার জন্য
       - name: Chrome সেটআপ
         uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
 
       - name: প্যাকেজ ইন্সটল
         run: npm install
         env:
+          # গিটহাব রানারে Puppeteer যেন বাড়তি Chrome ডাউনলোড না করে
           PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: true
           PUPPETEER_SKIP_DOWNLOAD: true
 
@@ -32,6 +36,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # স্ক্রিপ্টকে Chrome-এর লোকেশন জানিয়ে দেওয়া
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
         run: node tender_scrape.js
 
       - name: নতুন পাঠানো টেন্ডার ফাইল সেভ করা
