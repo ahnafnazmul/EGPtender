@@ -507,7 +507,7 @@ async function generateTenderImage(browser, tender) {
         </div>
         <div class="info-item">
           <span class="info-icon">🔢</span>
-          <span class="info-label">এপপ আইডি (APP ID):</span>
+          <span class="info-label">এপিপি আইডি (APP ID):</span>
           <span class="info-val">${appIdBn}</span>
         </div>
         <div class="info-item">
@@ -611,7 +611,7 @@ function formatTenderMessage(tender) {
     `📅 *প্রকাশের তারিখ:* ${tender.pubDate}`,
     `⏰ *জমাদানের শেষ তারিখ:* ${tender.lastDate}`,
     ``,
-    `সার্বিক সহায়তায়:`,
+    `যেকোন টেন্ডারে অংশগ্রহণে সার্বিক সহায়তায় যোগাযোগ করুন:`,
     `এফ. এন. এফ কম্পিউটার & অনলাইন সার্ভিসেস`,
     `বাংলাবাজার রোড, বরিশাল। 📱 01533199800`
   ].join("\n");
