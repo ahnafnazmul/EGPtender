@@ -1,4 +1,4 @@
-// eprocure.gov.bd থেকে নতুন ১০টি ই-টেন্ডার নোটিশ এবং ভেতরে ঢুকে ডকুমেন্ট প্রাইজ ও সিকিউরিটি তথ্য স্ক্র্যাপ করে HD ব্যানার তৈরি করে Telegram এ পাঠায়
+// eprocure.gov.bd থেকে ই-টেন্ডার নোটিশ স্ক্র্যাপ করে AllJobs ডিজাইনে HD ব্যানার তৈরি করে Telegram এ পাঠায়
 
 const fs = require("fs");
 const path = require("path");
@@ -72,8 +72,6 @@ async function fetchTendersAndDetails(browser) {
         const col1Text = cols[1].innerText.trim();
         const col2Text = cols[2].innerText.trim();
         const col3Text = cols[3].innerText.trim();
-        const col4Text = cols[4].innerText.trim();
-        const col5Text = cols[5] ? cols[5].innerText.trim() : "";
 
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
@@ -82,13 +80,14 @@ async function fetchTendersAndDetails(browser) {
           data.push({
             rowIndex: index,
             id: tenderId,
-            refNo: col1Text.replace(/\n/g, ' '),
             title: col2Text.replace(/\n/g, ' '),
             peName: col3Text.replace(/\n/g, ' '),
-            method: col4Text.replace(/\n/g, ' '),
-            dates: col5Text.replace(/\n/g, ' '),
+            appId: "N/A",
+            nature: "N/A",
             docPrice: "N/A",
-            securityAmount: "N/A"
+            securityAmount: "N/A",
+            pubDate: "N/A",
+            lastDate: "N/A"
           });
         }
       });
@@ -119,27 +118,48 @@ async function fetchTendersAndDetails(browser) {
           if (detailPage) {
             await detailPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
             
-            // লট টেবিল লোড হওয়ার জন্য ১ সেকেন্ড বিরতি
             await new Promise(r => setTimeout(r, 1000));
 
             const details = await detailPage.evaluate(() => {
+              let appId = "N/A";
+              let nature = "N/A";
               let docPrice = "N/A";
               let securityAmount = "N/A";
+              let pubDate = "N/A";
+              let lastDate = "N/A";
 
               const allCells = Array.from(document.querySelectorAll('td, th'));
 
-              // ১. Document Price বের করা
               for (let i = 0; i < allCells.length; i++) {
                 const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
+
+                // APP ID
+                if (text.includes("APP ID") || text.includes("App ID")) {
+                  if (allCells[i + 1]) appId = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                }
+
+                // Procurement Nature
+                if (text.includes("Procurement Nature")) {
+                  if (allCells[i + 1]) nature = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                }
+
+                // Document Price
                 if (text.includes("Tender/Proposal Document Price")) {
-                  if (allCells[i + 1]) {
-                    docPrice = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
-                  }
-                  break;
+                  if (allCells[i + 1]) docPrice = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
+                }
+
+                // Scheduled Tender/Proposal Publication Date and Time
+                if (text.includes("Scheduled Tender/Proposal Publication")) {
+                  if (allCells[i + 1]) pubDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                }
+
+                // Last Date and Time for Tender/Proposal Security Submission
+                if (text.includes("Last Date and Time for Tender/Proposal Security")) {
+                  if (allCells[i + 1]) lastDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
                 }
               }
 
-              // ২. Security Amount বের করা (লট টেবিল পর্যবেক্ষণ)
+              // Security Amount (Lot Table)
               const securityHeader = allCells.find(cell => {
                 const cleanText = cell.innerText.replace(/\s+/g, ' ').trim();
                 return cleanText.includes("Tender/Proposal security") || cleanText.includes("Amount in BDT");
@@ -150,10 +170,7 @@ async function fetchTendersAndDetails(browser) {
                 const table = securityHeader.closest('table');
                 
                 if (headerRow && table) {
-                  // হেডারে সিকিউরিটি কলাম কত নম্বরে আছে বের করা
                   const colIdx = Array.from(headerRow.children).indexOf(securityHeader);
-                  
-                  // ডেটা রো খুঁজে বের করা
                   const allRows = Array.from(table.querySelectorAll('tr'));
                   const headerRowIdx = allRows.indexOf(headerRow);
                   
@@ -167,11 +184,15 @@ async function fetchTendersAndDetails(browser) {
                 }
               }
 
-              return { docPrice, securityAmount };
+              return { appId, nature, docPrice, securityAmount, pubDate, lastDate };
             });
 
+            tender.appId = details.appId;
+            tender.nature = details.nature;
             tender.docPrice = details.docPrice;
             tender.securityAmount = details.securityAmount;
+            tender.pubDate = details.pubDate;
+            tender.lastDate = details.lastDate;
 
             await detailPage.close();
           }
@@ -197,12 +218,14 @@ async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  await page.setViewport({ width: 800, height: 850, deviceScaleFactor: 2 });
+  await page.setViewport({ width: 800, height: 920, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
-  const datesBn = convertToBanglaDigitsAndMonths(tender.dates);
+  const appIdBn = convertToBanglaDigitsAndMonths(tender.appId);
   const docPriceBn = convertToBanglaDigitsAndMonths(tender.docPrice);
   const securityBn = convertToBanglaDigitsAndMonths(tender.securityAmount);
+  const pubDateBn = convertToBanglaDigitsAndMonths(tender.pubDate);
+  const lastDateBn = convertToBanglaDigitsAndMonths(tender.lastDate);
 
   const theme = COLOR_THEMES[Math.floor(Math.random() * COLOR_THEMES.length)];
 
@@ -217,7 +240,7 @@ async function generateTenderImage(browser, tender) {
       * { box-sizing: border-box; }
       body {
         width: 800px;
-        height: 850px;
+        height: 920px;
         margin: 0;
         padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
@@ -248,23 +271,23 @@ async function generateTenderImage(browser, tender) {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 16px 20px;
+        padding: 14px 20px;
         z-index: 2;
       }
       .header-title-bn {
-        font-size: 32px;
+        font-size: 30px;
         font-weight: 800;
         margin: 0;
       }
       .header-title-sub {
-        font-size: 20px;
+        font-size: 19px;
         font-weight: 700;
         opacity: 0.9;
-        margin-top: 4px;
+        margin-top: 2px;
       }
 
       .content-body {
-        padding: 15px 35px;
+        padding: 12px 30px;
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -275,23 +298,23 @@ async function generateTenderImage(browser, tender) {
       .info-list {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 9px;
       }
 
       .info-item {
         display: flex;
         align-items: flex-start;
-        font-size: 20px;
+        font-size: 19px;
         color: #0f172a;
         font-weight: 700;
         line-height: 1.3;
       }
 
       .info-icon {
-        font-size: 22px;
-        width: 36px;
+        font-size: 20px;
+        width: 32px;
         text-align: center;
-        margin-right: 8px;
+        margin-right: 6px;
         flex-shrink: 0;
       }
 
@@ -308,14 +331,15 @@ async function generateTenderImage(browser, tender) {
         word-break: break-word;
       }
 
+      /* Compact AllJobs Style Footer */
       .footer-container {
-        padding: 0 25px 20px 25px;
+        padding: 0 20px 16px 20px;
         z-index: 2;
       }
 
       .footer-card {
         border: 2px solid ${theme.primary};
-        border-radius: 10px;
+        border-radius: 8px;
         overflow: hidden;
         background: #ffffff;
       }
@@ -323,9 +347,9 @@ async function generateTenderImage(browser, tender) {
       .footer-top-banner {
         background-color: #ffffff;
         color: ${theme.primary};
-        font-size: 19px;
+        font-size: 17px;
         font-weight: 800;
-        padding: 6px 10px;
+        padding: 4px 10px;
         text-align: center;
         border-bottom: 2px solid ${theme.primary};
       }
@@ -333,15 +357,16 @@ async function generateTenderImage(browser, tender) {
       .footer-main-body {
         background-color: ${theme.primary};
         color: #ffffff;
-        padding: 12px 15px 14px 15px;
+        padding: 8px 12px;
         text-align: center;
       }
 
       .brand-title {
-        font-size: 32px;
+        font-size: 34px;
         font-weight: 900;
-        margin-bottom: 6px;
-        letter-spacing: -0.3px;
+        line-height: 1.1;
+        margin-bottom: 4px;
+        letter-spacing: -0.5px;
         white-space: nowrap;
       }
 
@@ -349,14 +374,14 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 10px;
+        padding: 0 5px;
       }
 
       .brand-address {
         display: flex;
         align-items: center;
-        gap: 6px;
-        font-size: 22px;
+        gap: 5px;
+        font-size: 20px;
         font-weight: 800;
       }
 
@@ -364,14 +389,14 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 27px;
+        font-size: 25px;
         font-weight: 800;
       }
 
       .social-icons {
         display: flex;
         gap: 6px;
-        font-size: 24px;
+        font-size: 22px;
       }
 
       .fa-whatsapp { color: #25D366; }
@@ -395,34 +420,44 @@ async function generateTenderImage(browser, tender) {
           <span class="info-val">${tenderIdBn}</span>
         </div>
         <div class="info-item">
+          <span class="info-icon">🔢</span>
+          <span class="info-label">এপপ আইডি (APP ID):</span>
+          <span class="info-val">${appIdBn}</span>
+        </div>
+        <div class="info-item">
           <span class="info-icon">🏢</span>
-          <span class="info-label">দপ্তর/প্রতিষ্ঠান:</span>
+          <span class="info-label">দপ্তর:</span>
           <span class="info-val">${tender.peName}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">🏗️</span>
-          <span class="info-label">কাজের বিবরণ:</span>
+          <span class="info-label">কাজের বিবরন:</span>
           <span class="info-val">${tender.title}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📌</span>
-          <span class="info-label">পদ্ধতি (Method):</span>
-          <span class="info-val">${tender.method}</span>
+          <span class="info-label">কাজের ধরন:</span>
+          <span class="info-val">${tender.nature}</span>
         </div>
         <div class="info-item">
           <span class="info-icon">💵</span>
-          <span class="info-label">ডকুমেন্ট মূল্য:</span>
+          <span class="info-label">শিডিউল এর দাম:</span>
           <span class="info-val">${docPriceBn} ৳</span>
         </div>
         <div class="info-item">
           <span class="info-icon">🛡️</span>
-          <span class="info-label">টেন্ডার সিকিউরিটি:</span>
+          <span class="info-label">সিকিউরিটি এমাউন্ট:</span>
           <span class="info-val">${securityBn} ৳</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📅</span>
-          <span class="info-label">সময়সূচী:</span>
-          <span class="info-val">${datesBn}</span>
+          <span class="info-label">প্রকাশের তারিখ:</span>
+          <span class="info-val">${pubDateBn}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-icon">⏰</span>
+          <span class="info-label">জমাদানের শেষ তারিখ:</span>
+          <span class="info-val">${lastDateBn}</span>
         </div>
       </div>
     </div>
@@ -468,15 +503,17 @@ function formatTenderMessage(tender) {
   return [
     `📢 *নতুন ই-টেন্ডার নোটিশ (e-GP)*`,
     ``,
-    `🆔 *Tender ID:* \`${tender.id}\``,
-    `🏢 *প্রতিষ্ঠান:* ${tender.peName}`,
-    `🏗️ *কাজের শিরোনাম:* ${tender.title}`,
-    `📌 *পদ্ধতি:* ${tender.method}`,
-    `💵 *ডকুমেন্ট মূল্য:* ${tender.docPrice} BDT`,
-    `🛡️ *টেন্ডার সিকিউরিটি:* ${tender.securityAmount} BDT`,
-    `📅 *সময়সূচী:* ${tender.dates}`,
+    `🆔 *টেন্ডার আইডি:* \`${tender.id}\``,
+    `🔢 *এপপ আইডি:* ${tender.appId}`,
+    `🏢 *দপ্তর:* ${tender.peName}`,
+    `🏗️ *কাজের বিবরন:* ${tender.title}`,
+    `📌 *কাজের ধরন:* ${tender.nature}`,
+    `💵 *শিডিউল এর দাম:* ${tender.docPrice} BDT`,
+    `🛡️ *সিকিউরিটি এমাউন্ট:* ${tender.securityAmount} BDT`,
+    `📅 *প্রকাশের তারিখ:* ${tender.pubDate}`,
+    `⏰ *জমাদানের শেষ তারিখ:* ${tender.lastDate}`,
     ``,
-    `যোগাযোগ:`,
+    `সার্বিক সহায়তায়:`,
     `এফ. এন. এফ কম্পিউটার & অনলাইন সার্ভিসেস`,
     `বাংলাবাজার রোড, বরিশাল। 📱 01533199800`
   ].join("\n");
@@ -500,7 +537,7 @@ async function sendTelegramPhoto(imagePath, caption) {
     console.log("Telegram এ টেন্ডার ব্যানার পাঠানো হয়েছে ✅");
     return true;
   } catch (e) {
-    console.error("Telegram এ টেন্ডার পাঠাতে ব্যর্থ:", e.message);
+    console.error("Telegram এ পাঠাতে ব্যর্থ:", e.message);
     return false;
   }
 }
