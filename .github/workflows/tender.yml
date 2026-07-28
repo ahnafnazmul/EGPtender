@@ -1,0 +1,43 @@
+name: e-GP Tender Notifier
+
+on:
+  schedule:
+    # বাংলাদেশ সময় অনুযায়ী প্রতি ৪ ঘণ্টা পর পর চলবে
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape-and-notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: কোড চেকআউট
+        uses: actions/checkout@v3
+
+      - name: Node.js সেটআপ
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Chrome সেটআপ
+        uses: browser-actions/setup-chrome@v1
+
+      - name: প্যাকেজ ইন্সটল
+        run: npm install
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: true
+          PUPPETEER_SKIP_DOWNLOAD: true
+
+      - name: টেন্ডার স্ক্র্যাপ ও নোটিফাই
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node tender_scrape.js
+
+      - name: নতুন পাঠানো টেন্ডার ফাইল সেভ করা
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add sent_tenders.json
+          git commit -m "Update sent tenders" || exit 0
+          git push
