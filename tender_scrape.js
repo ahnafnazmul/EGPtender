@@ -55,14 +55,12 @@ async function fetchTendersAndDetails(browser) {
   console.log("e-GP পোর্টাল লোড করা হচ্ছে...");
   const page = await browser.newPage();
   
-  // Real browser user-agent
   await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
 
   try {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.waitForSelector('table', { timeout: 20000 });
 
-    // ১. মূল তালিকা থেকে টেন্ডার আইডি ও রো ইন্ডেক্স বের করা
     const basicList = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
@@ -108,14 +106,11 @@ async function fetchTendersAndDetails(browser) {
 
     console.log(`${newTenders.length}টি নতুন টেন্ডারের ডিটেইলস সংগৃহীত হচ্ছে...`);
 
-    // ২. প্রতিটি নতুন টেন্ডারের লিংকে ক্লিক করে নতুন ট্যাবে গিয়ে তথ্য এক্সট্র্যাক্ট করা
     for (const tender of newTenders) {
       try {
-        // মেইন পেজের রো তে থাকা টাইটেল লিংকটি ধরা
         const titleLinks = await page.$$('table tr td:nth-child(3) a');
         if (titleLinks[tender.rowIndex]) {
           
-          // ক্লিক করার পর নতুন ট্যাব ওপেন হওয়ার জন্য ওয়েট করা
           const newTargetPromise = browser.waitForTarget(target => target.opener() === page.target(), { timeout: 15000 });
           await titleLinks[tender.rowIndex].click();
           const newTarget = await newTargetPromise;
@@ -124,36 +119,49 @@ async function fetchTendersAndDetails(browser) {
           if (detailPage) {
             await detailPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
             
-            // ডিটেইলস পেজের ভেতর থেকে ডাটা নেয়া
+            // লট টেবিল লোড হওয়ার জন্য ১ সেকেন্ড বিরতি
+            await new Promise(r => setTimeout(r, 1000));
+
             const details = await detailPage.evaluate(() => {
               let docPrice = "N/A";
               let securityAmount = "N/A";
 
-              const allTd = Array.from(document.querySelectorAll('td'));
+              const allCells = Array.from(document.querySelectorAll('td, th'));
 
-              // Document Price
-              for (let i = 0; i < allTd.length; i++) {
-                const text = allTd[i].innerText.trim();
+              // ১. Document Price বের করা
+              for (let i = 0; i < allCells.length; i++) {
+                const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
                 if (text.includes("Tender/Proposal Document Price")) {
-                  if (allTd[i + 1]) {
-                    docPrice = allTd[i + 1].innerText.trim().replace(/,/g, '');
+                  if (allCells[i + 1]) {
+                    docPrice = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
                   }
                   break;
                 }
               }
 
-              // Security Amount (Lot Table থেকে)
-              const securityTd = allTd.find(td => td.innerText.includes("Tender/Proposal security"));
-              if (securityTd) {
-                const table = securityTd.closest('table');
-                if (table) {
-                  const headerRow = securityTd.closest('tr');
-                  const colIdx = Array.from(headerRow.children).indexOf(securityTd);
-                  const rows = Array.from(table.querySelectorAll('tr')).filter(r => r !== headerRow);
-                  if (rows.length > 0 && colIdx !== -1) {
-                    const targetCell = rows[0].children[colIdx];
-                    if (targetCell) {
-                      securityAmount = targetCell.innerText.trim().replace(/,/g, '');
+              // ২. Security Amount বের করা (লট টেবিল পর্যবেক্ষণ)
+              const securityHeader = allCells.find(cell => {
+                const cleanText = cell.innerText.replace(/\s+/g, ' ').trim();
+                return cleanText.includes("Tender/Proposal security") || cleanText.includes("Amount in BDT");
+              });
+
+              if (securityHeader) {
+                const headerRow = securityHeader.closest('tr');
+                const table = securityHeader.closest('table');
+                
+                if (headerRow && table) {
+                  // হেডারে সিকিউরিটি কলাম কত নম্বরে আছে বের করা
+                  const colIdx = Array.from(headerRow.children).indexOf(securityHeader);
+                  
+                  // ডেটা রো খুঁজে বের করা
+                  const allRows = Array.from(table.querySelectorAll('tr'));
+                  const headerRowIdx = allRows.indexOf(headerRow);
+                  
+                  if (headerRowIdx !== -1 && allRows[headerRowIdx + 1]) {
+                    const dataRow = allRows[headerRowIdx + 1];
+                    if (dataRow.children[colIdx]) {
+                      const val = dataRow.children[colIdx].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
+                      if (val) securityAmount = val;
                     }
                   }
                 }
