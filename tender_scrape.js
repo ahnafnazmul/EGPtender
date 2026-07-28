@@ -8,6 +8,7 @@ const FormData = require("form-data");
 
 const TARGET_URL = "https://www.eprocure.gov.bd/resources/common/StdTenderSearch.jsp?h=t";
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
+const CHECK_INTERVAL_MS = 60 * 60 * 1000; // ১ ঘণ্টা পর পর রান হবে
 
 // কালার থিম কালেকশন
 const COLOR_THEMES = [
@@ -89,7 +90,7 @@ function numberToBanglaWords(amountStr) {
   const ones = ["", "এক", "দুই", "তিন", "চার", "পাঁচ", "ছয়", "সাত", "আট", "নয়", "দশ", 
                 "এগারো", "বারো", "তেরো", "চৌদ্দ", "পোনেরো", "ষোল", "সতেরো", "১৮", "উনিশ", "বিশ", 
                 "একুশ", "বাইশ", "তেইশ", "চব্বিশ", "পঁচিশ", "ছাব্বিশ", "সাতাশ", "আটাশ", "উনত্রিশ", "ত্রিশ", 
-                "একত্রিশ", "বত্রিশ", "তেরিশ", "চৌত্রিশ", "পঁয়ত্রিশ", "ছত্রিশ", "সাইত্রিশ", "আটত্রিশ", "উনচল্লিশ", "চল্লিশ", 
+                "একত্রিশ", "বত্রিশ", "তেরিশ", "চৌত্রিশ", "পঁয়তাল্লিশ", "ছত্রিশ", "সাইত্রিশ", "আটত্রিশ", "উনচল্লিশ", "চল্লিশ", 
                 "একচল্লিশ", "বায়াল্লিশ", "তেতাল্লিশ", "চৌয়াল্লিশ", "পঁয়তাল্লিশ", "ছেচল্লিশ", "সাতচল্লিশ", "আটচল্লিশ", "উনপঞ্চাশ", "পঞ্চাশ", 
                 "একান্ন", "বায়ান্ন", "তিরিপান্ন", "চৌয়ান্ন", "পঁচান্ন", "ছাপ্পান্ন", "সাতান্ন", "আটান্ন", "উনষাট", "ষাট", 
                 "একষট্টি", "বাষট্টি", "তেষট্টি", "চৌষট্টি", "পঁয়ষট্টি", "ছেষট্টি", "সাতষট্টি", "আটষট্টি", "উনসত্তর", "সত্তর", 
@@ -135,15 +136,15 @@ async function fetchTendersAndDetails(browser) {
     await page.waitForSelector('table', { timeout: 20000 });
 
     const basicList = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
+      // সব বৈধ রো নেওয়া হচ্ছে
+      const allRows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
 
-      rows.slice(0, 10).forEach((row, index) => {
-        const cols = row.querySelectorAll('td');
-        if (cols.length < 5) return;
-
-        const col1Text = cols[1].innerText.trim();
-        const col2Text = cols[2].innerText.trim();
+      // প্রথম পেজের ১০টি টেন্ডার রো নির্ভুলভাবে ফিল্টার
+      for (let index = 0; index < allRows.length; index++) {
+        const cols = allRows[index].querySelectorAll('td');
+        const col1Text = cols[1] ? cols[1].innerText.trim() : "";
+        const col2Text = cols[2] ? cols[2].innerText.trim() : "";
 
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
@@ -163,7 +164,10 @@ async function fetchTendersAndDetails(browser) {
             lastDate: "N/A"
           });
         }
-      });
+        
+        // ১০টি টেন্ডার পাওয়া গেলে লুপ থেমে যাবে
+        if (data.length === 10) break;
+      }
 
       return data;
     });
@@ -172,11 +176,12 @@ async function fetchTendersAndDetails(browser) {
     const newTenders = basicList.filter(t => !sentIds.has(t.id));
 
     if (newTenders.length === 0) {
+      console.log("নতুন কোনো টেন্ডার পাওয়া যায়নি।");
       await page.close();
       return { newTenders: [], sentIds };
     }
 
-    console.log(`${newTenders.length}টি নতুন টেন্ডারের ডিটেইলস সংগৃহীত হচ্ছে...`);
+    console.log(`প্রথম পেজ থেকে মোট ১০টি টেন্ডারের মধ্যে ${newTenders.length}টি নতুন টেন্ডার পাওয়া গেছে। ডিটেইলস স্ক্র্যাপ শুরু হচ্ছে...`);
 
     for (const tender of newTenders) {
       try {
@@ -665,10 +670,10 @@ async function sendTelegramPhoto(imagePath, caption) {
   }
 }
 
-// ---------- মেইন এক্সিকিউশন ----------
+// ---------- স্ক্র্যাপিং প্রসেস রানার ----------
 
-async function main() {
-  console.log("e-GP টেন্ডার স্ক্র্যাপ শুরু...", new Date().toISOString());
+async function runScraperTask() {
+  console.log("--- e-GP টেন্ডার স্ক্র্যাপ চেক শুরু ---", new Date().toLocaleString("bn-BD"));
 
   const browser = await puppeteer.launch({
     headless: "new",
@@ -679,7 +684,7 @@ async function main() {
     const { newTenders, sentIds } = await fetchTendersAndDetails(browser);
 
     if (newTenders.length === 0) {
-      console.log("নতুন কোনো টেন্ডার নেই।");
+      console.log("নতুন কোনো টেন্ডার পাওয়া যায়নি।");
       await browser.close();
       return;
     }
@@ -698,13 +703,26 @@ async function main() {
     }
 
     saveSentIds(sentIds);
-    console.log("টেন্ডার প্রসেসিং সম্পূর্ণ ✅");
+    console.log("আজকের এই পর্বের টেন্ডার প্রসেসিং সম্পূর্ণ ✅");
+  } catch (err) {
+    console.error("প্রসেস চলাকালে ত্রুটি:", err.message);
   } finally {
     await browser.close();
   }
 }
 
-main().catch(err => {
-  console.error("ফেইলড:", err);
-  process.exit(1);
-});
+// ---------- অটোমেশন লুপ (প্রতি ১ ঘণ্টা পর পর) ----------
+
+function startAutomation() {
+  // ১. স্ক্রিপ্ট চালু হওয়ার সাথে সাথে প্রথমবার চেক করবে
+  runScraperTask();
+
+  // ২. এরপর থেকে প্রতি ১ ঘণ্টা (60 মিনিট) পর পর চেক করতে থাকবে
+  setInterval(() => {
+    runScraperTask();
+  }, CHECK_INTERVAL_MS);
+
+  console.log("🚀 অটোমেটিক স্ক্র্যাপার চালু হয়েছে। প্রতি ১ ঘণ্টা পর পর নতুন টেন্ডার চেক করা হবে।");
+}
+
+startAutomation();
