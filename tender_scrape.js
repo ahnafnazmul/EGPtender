@@ -5,7 +5,6 @@ const path = require("path");
 const axios = require("axios");
 const puppeteer = require("puppeteer");
 const FormData = require("form-data");
-const nodeHtmlToImage = require("node-html-to-image");
 
 const TARGET_URL = "https://www.eprocure.gov.bd/resources/common/StdTenderSearch.jsp?h=t";
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
@@ -52,15 +51,8 @@ function convertToBanglaDigitsAndMonths(text) {
 
 // ---------- e-GP স্ক্র্যাপিং (Puppeteer দিয়ে) ----------
 
-async function fetchTenders() {
+async function fetchTenders(browser) {
   console.log("e-GP পোর্টাল লোড করা হচ্ছে...");
-  
-  const browser = await puppeteer.launch({
-    headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
-
   const page = await browser.newPage();
   
   try {
@@ -81,7 +73,6 @@ async function fetchTenders() {
         const col4Text = cols[4].innerText.trim(); // Type / Method
         const col5Text = cols[5] ? cols[5].innerText.trim() : ""; // Dates
 
-        // Tender ID এক্সট্র্যাক্ট করা (প্রথম সংখ্যা)
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
 
@@ -100,19 +91,22 @@ async function fetchTenders() {
       return data;
     });
 
-    await browser.close();
+    await page.close();
     return tenders;
   } catch (err) {
     console.error("স্ক্র্যাপিংয়ে সমস্যা:", err.message);
-    await browser.close();
+    await page.close();
     return [];
   }
 }
 
 // ---------- এইচডি টেন্ডার ব্যানার ইমেজ তৈরি ----------
 
-async function generateTenderImage(tender) {
+async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
+  const page = await browser.newPage();
+
+  await page.setViewport({ width: 800, height: 800, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
   const datesBn = convertToBanglaDigitsAndMonths(tender.dates);
@@ -353,19 +347,13 @@ async function generateTenderImage(tender) {
   `;
 
   try {
-    await nodeHtmlToImage({
-      output: outputPath,
-      html: htmlContent,
-      type: 'jpeg',
-      quality: 100,
-      puppeteerArgs: {
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-      }
-    });
+    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
+    await page.screenshot({ path: outputPath, type: 'jpeg', quality: 95 });
+    await page.close();
     return outputPath;
   } catch (error) {
     console.error("টেন্ডার ইমেজ তৈরিতে সমস্যা:", error.message);
+    await page.close();
     return null;
   }
 }
@@ -416,34 +404,44 @@ async function sendTelegramPhoto(imagePath, caption) {
 async function main() {
   console.log("e-GP টেন্ডার স্ক্র্যাপ শুরু...", new Date().toISOString());
 
-  const tenders = await fetchTenders();
-  console.log(`মোট ${tenders.length}টি টেন্ডার পাওয়া গেছে`);
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
 
-  const sentIds = loadSentIds();
-  const newTenders = tenders.filter(t => !sentIds.has(t.id));
+  try {
+    const tenders = await fetchTenders(browser);
+    console.log(`মোট ${tenders.length}টি টেন্ডার পাওয়া গেছে`);
 
-  if (newTenders.length === 0) {
-    console.log("নতুন কোনো টেন্ডার নেই।");
-    return;
-  }
+    const sentIds = loadSentIds();
+    const newTenders = tenders.filter(t => !sentIds.has(t.id));
 
-  console.log(`${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
-
-  for (const tender of newTenders) {
-    const caption = formatTenderMessage(tender);
-    const imagePath = await generateTenderImage(tender);
-
-    if (imagePath && fs.existsSync(imagePath)) {
-      await sendTelegramPhoto(imagePath, caption);
-      try { fs.unlinkSync(imagePath); } catch (e) {}
+    if (newTenders.length === 0) {
+      console.log("নতুন কোনো টেন্ডার নেই।");
+      await browser.close();
+      return;
     }
 
-    sentIds.add(tender.id);
-    await new Promise(r => setTimeout(r, 3000));
-  }
+    console.log(`${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
 
-  saveSentIds(sentIds);
-  console.log("টেন্ডার প্রসেসিং সম্পন্ন ✅");
+    for (const tender of newTenders) {
+      const caption = formatTenderMessage(tender);
+      const imagePath = await generateTenderImage(browser, tender);
+
+      if (imagePath && fs.existsSync(imagePath)) {
+        await sendTelegramPhoto(imagePath, caption);
+        try { fs.unlinkSync(imagePath); } catch (e) {}
+      }
+
+      sentIds.add(tender.id);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    saveSentIds(sentIds);
+    console.log("টেন্ডার প্রসেসিং সম্পন্ন ✅");
+  } finally {
+    await browser.close();
+  }
 }
 
 main().catch(err => {
