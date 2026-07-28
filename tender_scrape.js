@@ -7,8 +7,8 @@ const puppeteer = require("puppeteer");
 const FormData = require("form-data");
 
 const TARGET_URL = "https://www.eprocure.gov.bd/resources/common/StdTenderSearch.jsp?h=t";
+const VIEW_URL_PREFIX = "https://www.eprocure.gov.bd/resources/common/ViewTender.jsp?id=";
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
-const CHECK_INTERVAL_MS = 60 * 60 * 1000; // ১ ঘণ্টা পর পর রান হবে
 
 const COLOR_THEMES = [
   { primary: "#0a3c22", watermark: "#10b981" }, // Deep Forest Green
@@ -132,7 +132,7 @@ function numberToBanglaWords(amountStr) {
   return words.trim() + " টাকা";
 }
 
-// ---------- e-GP স্ক্র্যাপিং (Sequential - ১টি করে) ----------
+// ---------- e-GP স্ক্র্যাপিং (Direct Sequential Load) ----------
 
 async function runScraperTask() {
   console.log("--- e-GP টেন্ডার স্ক্র্যাপ চেক শুরু ---", new Date().toLocaleString("bn-BD"));
@@ -145,13 +145,14 @@ async function runScraperTask() {
   const sentIds = loadSentIds();
 
   try {
-    const mainPage = await browser.newPage();
-    await mainPage.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
-    await mainPage.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await mainPage.waitForSelector('table', { timeout: 20000 });
+    const page = await browser.newPage();
+    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
+    
+    await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.waitForSelector('table', { timeout: 20000 });
 
-    // মূল সার্চ টেবিল থেকে প্রথম ১০টি নির্ভুল টেন্ডারের সাধারণ তালিকা সংগ্রহ
-    const basicList = await mainPage.evaluate(() => {
+    // মূল সার্চ টেবিল থেকে প্রথম ১০টি টেন্ডারের লিস্ট সংগ্রহ
+    const basicList = await page.evaluate(() => {
       const allRows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
 
@@ -163,147 +164,129 @@ async function runScraperTask() {
         const tenderId = idMatch ? idMatch[0] : "";
 
         if (tenderId) {
-          data.push({ rowIndex: index, id: tenderId });
+          data.push(tenderId);
         }
         if (data.length === 10) break;
       }
       return data;
     });
 
-    const newTenders = basicList.filter(t => !sentIds.has(t.id));
+    const newTenders = basicList.filter(id => !sentIds.has(id));
 
     if (newTenders.length === 0) {
       console.log("নতুন কোনো টেন্ডার পাওয়া যায়নি।");
-      await mainPage.close();
+      await page.close();
       await browser.close();
       return;
     }
 
     console.log(`মোট ১০টির মধ্যে ${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
 
-    // একে একে প্রতিটি টেন্ডার একটি নির্দিষ্ট ট্যাবে খুলে নিখুঁতভাবে স্ক্র্যাপ ও পাঠানো
-    for (const item of newTenders) {
-      const detailPage = await browser.newPage();
-      await detailPage.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
-
+    // ডাইরেক্ট ইউআরএল ধরে একে একে সম্পূর্ণ নির্ভুল স্ক্র্যাপিং
+    for (const tenderId of newTenders) {
       try {
-        // নতুন লিংক ক্লিক লজিক
-        const newTargetPromise = browser.waitForTarget(target => target.opener() === mainPage.target(), { timeout: 15000 });
-        
-        const titleLinks = await mainPage.$$('table tr td:nth-child(3) a');
-        if (titleLinks[item.rowIndex]) {
-          await titleLinks[item.rowIndex].click();
-          const target = await newTargetPromise;
-          const targetPage = await target.page();
+        const directUrl = VIEW_URL_PREFIX + tenderId;
+        await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 1500));
 
-          if (targetPage) {
-            await targetPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-            await new Promise(r => setTimeout(r, 1500));
+        const details = await page.evaluate(() => {
+          let orgName = "N/A", district = "N/A", appId = "N/A", nature = "N/A";
+          let docPrice = "N/A", securityAmount = "N/A", pubDate = "N/A", lastDate = "N/A", title = "N/A";
 
-            const details = await targetPage.evaluate(() => {
-              let orgName = "N/A", district = "N/A", appId = "N/A", nature = "N/A";
-              let docPrice = "N/A", securityAmount = "N/A", pubDate = "N/A", lastDate = "N/A", title = "N/A";
+          const allCells = Array.from(document.querySelectorAll('td, th'));
 
-              const allCells = Array.from(document.querySelectorAll('td, th'));
+          for (let i = 0; i < allCells.length; i++) {
+            const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
 
-              for (let i = 0; i < allCells.length; i++) {
-                const text = allCells[i].innerText.replace(/\s+/g, ' ').trim();
-
-                if (text === "Organization :" || text === "Organization") {
-                  if (allCells[i + 1]) orgName = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-                if (text.includes("Procuring Entity District")) {
-                  if (allCells[i + 1]) district = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-                if (text.includes("APP ID") || text.includes("App ID")) {
-                  if (allCells[i + 1]) {
-                    const fullApp = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                    const appMatch = fullApp.match(/\d+/);
-                    appId = appMatch ? appMatch[0] : fullApp;
-                  }
-                }
-                if (text.includes("Procurement Nature")) {
-                  if (allCells[i + 1]) nature = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-                if (text.includes("Tender/Proposal Package No. and Description")) {
-                  if (allCells[i + 1]) title = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-                if (text.includes("Tender/Proposal Document Price")) {
-                  if (allCells[i + 1]) docPrice = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
-                }
-                if (text.includes("Scheduled Tender/Proposal Publication")) {
-                  if (allCells[i + 1]) pubDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-                if (text.includes("Last Date and Time for Tender/Proposal Security")) {
-                  if (allCells[i + 1]) lastDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
-                }
-              }
-
-              // Security Amount Lot Table Extraction
-              const securityHeader = allCells.find(cell => {
-                const cleanText = cell.innerText.replace(/\s+/g, ' ').trim();
-                return cleanText.includes("Tender/Proposal security") || cleanText.includes("Amount in BDT");
-              });
-
-              if (securityHeader) {
-                const headerRow = securityHeader.closest('tr');
-                const table = securityHeader.closest('table');
-                if (headerRow && table) {
-                  const colIdx = Array.from(headerRow.children).indexOf(securityHeader);
-                  const allRows = Array.from(table.querySelectorAll('tr'));
-                  const headerRowIdx = allRows.indexOf(headerRow);
-                  if (headerRowIdx !== -1 && allRows[headerRowIdx + 1]) {
-                    const dataRow = allRows[headerRowIdx + 1];
-                    if (dataRow.children[colIdx]) {
-                      const val = dataRow.children[colIdx].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
-                      if (val) securityAmount = val;
-                    }
-                  }
-                }
-              }
-
-              return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate, title };
-            });
-
-            // ডাটা অনুবাদ ও তৈরি
-            const tender = {
-              id: item.id,
-              appId: details.appId,
-              orgNameBn: details.orgName !== "N/A" ? await translateToBangla(details.orgName) : "N/A",
-              districtBn: details.district !== "N/A" ? await translateToBangla(details.district) : "N/A",
-              titleBn: details.title !== "N/A" ? await translateToBangla(details.title) : "N/A",
-              natureBn: getProcurementNatureBn(details.nature),
-              docPrice: details.docPrice,
-              securityAmount: details.securityAmount,
-              pubDate: details.pubDate,
-              lastDate: details.lastDate
-            };
-
-            // টেলিগ্রামে পাঠানোর মেসেজ ও ইমেজ তৈরি
-            const caption = formatTenderMessage(tender);
-            const imagePath = await generateTenderImage(browser, tender);
-
-            if (imagePath && fs.existsSync(imagePath)) {
-              await sendTelegramPhoto(imagePath, caption);
-              try { fs.unlinkSync(imagePath); } catch (e) {}
+            if (text === "Organization :" || text === "Organization") {
+              if (allCells[i + 1]) orgName = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
             }
-
-            sentIds.add(tender.id);
-            saveSentIds(sentIds);
-            
-            await targetPage.close();
+            if (text.includes("Procuring Entity District")) {
+              if (allCells[i + 1]) district = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+            }
+            if (text.includes("APP ID") || text.includes("App ID")) {
+              if (allCells[i + 1]) {
+                const fullApp = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+                const appMatch = fullApp.match(/\d+/);
+                appId = appMatch ? appMatch[0] : fullApp;
+              }
+            }
+            if (text.includes("Procurement Nature")) {
+              if (allCells[i + 1]) nature = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+            }
+            if (text.includes("Tender/Proposal Package No. and Description")) {
+              if (allCells[i + 1]) title = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+            }
+            if (text.includes("Tender/Proposal Document Price")) {
+              if (allCells[i + 1]) docPrice = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
+            }
+            if (text.includes("Scheduled Tender/Proposal Publication")) {
+              if (allCells[i + 1]) pubDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+            }
+            if (text.includes("Last Date and Time for Tender/Proposal Security")) {
+              if (allCells[i + 1]) lastDate = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
+            }
           }
+
+          // Security Amount Lot Table Extraction
+          const securityHeader = allCells.find(cell => {
+            const cleanText = cell.innerText.replace(/\s+/g, ' ').trim();
+            return cleanText.includes("Tender/Proposal security") || cleanText.includes("Amount in BDT");
+          });
+
+          if (securityHeader) {
+            const headerRow = securityHeader.closest('tr');
+            const table = securityHeader.closest('table');
+            if (headerRow && table) {
+              const colIdx = Array.from(headerRow.children).indexOf(securityHeader);
+              const allRows = Array.from(table.querySelectorAll('tr'));
+              const headerRowIdx = allRows.indexOf(headerRow);
+              if (headerRowIdx !== -1 && allRows[headerRowIdx + 1]) {
+                const dataRow = allRows[headerRowIdx + 1];
+                if (dataRow.children[colIdx]) {
+                  const val = dataRow.children[colIdx].innerText.replace(/\s+/g, ' ').trim().replace(/,/g, '');
+                  if (val) securityAmount = val;
+                }
+              }
+            }
+          }
+
+          return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate, title };
+        });
+
+        // অনুবাদ ও ডাটা প্রস্তুতকরণ
+        const tender = {
+          id: tenderId,
+          appId: details.appId,
+          orgNameBn: details.orgName !== "N/A" ? await translateToBangla(details.orgName) : "N/A",
+          districtBn: details.district !== "N/A" ? await translateToBangla(details.district) : "N/A",
+          titleBn: details.title !== "N/A" ? await translateToBangla(details.title) : "N/A",
+          natureBn: getProcurementNatureBn(details.nature),
+          docPrice: details.docPrice,
+          securityAmount: details.securityAmount,
+          pubDate: details.pubDate,
+          lastDate: details.lastDate
+        };
+
+        const caption = formatTenderMessage(tender);
+        const imagePath = await generateTenderImage(browser, tender);
+
+        if (imagePath && fs.existsSync(imagePath)) {
+          await sendTelegramPhoto(imagePath, caption);
+          try { fs.unlinkSync(imagePath); } catch (e) {}
         }
+
+        sentIds.add(tender.id);
+        saveSentIds(sentIds);
+
       } catch (err) {
-        console.error(`ID ${item.id} প্রসেস করতে সমস্যা:`, err.message);
-      } finally {
-        await detailPage.close();
+        console.error(`ID ${tenderId} প্রসেস করতে সমস্যা:`, err.message);
       }
 
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1500));
     }
 
-    await mainPage.close();
+    await page.close();
 
   } catch (err) {
     console.error("প্রধান স্ক্র্যাপিংয়ে সমস্যা:", err.message);
@@ -657,16 +640,12 @@ async function sendTelegramPhoto(imagePath, caption) {
   }
 }
 
-// ---------- অটোমেশন চালু (প্রতি ১ ঘণ্টা পর পর) ----------
+// ---------- অটোমেশন রান ও সঠিকভাবে এক্সিট ----------
 
-function startAutomation() {
-  runScraperTask();
-
-  setInterval(() => {
-    runScraperTask();
-  }, CHECK_INTERVAL_MS);
-
-  console.log("🚀 অটোমেটিক স্ক্র্যাপার চালু হয়েছে। প্রতি ১ ঘণ্টা পর পর নতুন টেন্ডার চেক করা হবে।");
-}
-
-startAutomation();
+runScraperTask().then(() => {
+  console.log("আজকের পর্বের টেন্ডার প্রসেসিং সম্পূর্ণ এবং সফলভাবে বন্ধ করা হলো ✅");
+  process.exit(0);
+}).catch((err) => {
+  console.error("রান টাইমে এরর:", err);
+  process.exit(1);
+});
