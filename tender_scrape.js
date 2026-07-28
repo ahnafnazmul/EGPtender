@@ -1,4 +1,4 @@
-// eprocure.gov.bd থেকে নতুন ১০টি ই-টেন্ডার নোটিশ স্ক্র্যাপ করে HD ব্যানার তৈরি করে Telegram এ পাঠায়
+// eprocure.gov.bd থেকে নতুন ১০টি ই-টেন্ডার নোটিশ এবং ভেতরে ঢুকে ডকুমেন্ট প্রাইজ ও সিকিউরিটি তথ্য স্ক্র্যাপ করে HD ব্যানার তৈরি করে Telegram এ পাঠায়
 
 const fs = require("fs");
 const path = require("path");
@@ -33,7 +33,7 @@ function saveSentIds(set) {
 }
 
 function convertToBanglaDigitsAndMonths(text) {
-  if (!text) return text;
+  if (!text) return text || "";
   const digits = { '0': '০', '1': '১', '2': '২', '3': '৩', '4': '৪', '5': '৫', '6': '৬', '7': '৭', '8': '৮', '9': '৯' };
   const months = {
     'Jan': 'জানুয়ারি', 'Feb': 'ফেব্রুয়ারি', 'Mar': 'মার্চ', 'Apr': 'এপ্রিল',
@@ -59,6 +59,7 @@ async function fetchTenders(browser) {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.waitForSelector('table', { timeout: 20000 });
 
+    // মূল টেবিল থেকে বেসিক ডাটা এবং ডিটেইলস পেজের লিংক স্ক্র্যাপ করা
     const tenders = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
@@ -68,6 +69,7 @@ async function fetchTenders(browser) {
         if (cols.length < 5) return;
 
         const col1Text = cols[1].innerText.trim(); // ID & Ref
+        const titleAnchor = cols[2].querySelector('a'); // Title Column Link
         const col2Text = cols[2].innerText.trim(); // Title & Nature
         const col3Text = cols[3].innerText.trim(); // PE / Ministry
         const col4Text = cols[4].innerText.trim(); // Type / Method
@@ -75,6 +77,7 @@ async function fetchTenders(browser) {
 
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
+        const detailUrl = titleAnchor ? titleAnchor.href : null;
 
         if (tenderId) {
           data.push({
@@ -83,7 +86,8 @@ async function fetchTenders(browser) {
             title: col2Text.replace(/\n/g, ' '),
             peName: col3Text.replace(/\n/g, ' '),
             method: col4Text.replace(/\n/g, ' '),
-            dates: col5Text.replace(/\n/g, ' ')
+            dates: col5Text.replace(/\n/g, ' '),
+            detailUrl: detailUrl
           });
         }
       });
@@ -94,9 +98,61 @@ async function fetchTenders(browser) {
     await page.close();
     return tenders;
   } catch (err) {
-    console.error("স্ক্র্যাপিংয়ে সমস্যা:", err.message);
+    console.error("প্রধান পেজ স্ক্র্যাপিংয়ে সমস্যা:", err.message);
     await page.close();
     return [];
+  }
+}
+
+// ডিটেইলস পেজে ঢুকে Document Price ও Security Amount স্ক্র্যাপ করা
+async function fetchTenderDetails(browser, detailUrl) {
+  if (!detailUrl) return { docPrice: "N/A", securityAmount: "N/A" };
+
+  const page = await browser.newPage();
+  try {
+    await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    const details = await page.evaluate(() => {
+      let docPrice = "N/A";
+      let securityAmount = "N/A";
+
+      // Document Price বের করা
+      const allTd = Array.from(document.querySelectorAll('td'));
+      for (let i = 0; i < allTd.length; i++) {
+        const text = allTd[i].innerText.trim();
+        if (text.includes("Tender/Proposal Document Price")) {
+          if (allTd[i + 1]) {
+            docPrice = allTd[i + 1].innerText.trim();
+          }
+          break;
+        }
+      }
+
+      // Security Amount বের করা (Lot Table থেকে)
+      const lotHeaderTd = allTd.find(td => td.innerText.includes("Tender/Proposal security"));
+      if (lotHeaderTd && lotHeaderTd.closest('table')) {
+        const table = lotHeaderTd.closest('table');
+        const headerRow = lotHeaderTd.closest('tr');
+        const colIndex = Array.from(headerRow.children).indexOf(lotHeaderTd);
+
+        const dataRows = Array.from(table.querySelectorAll('tr')).filter(tr => tr !== headerRow);
+        if (dataRows.length > 0 && colIndex !== -1) {
+          const targetTd = dataRows[0].children[colIndex];
+          if (targetTd) {
+            securityAmount = targetTd.innerText.trim();
+          }
+        }
+      }
+
+      return { docPrice, securityAmount };
+    });
+
+    await page.close();
+    return details;
+  } catch (err) {
+    console.error(`ডিটেইলস পেজ স্ক্র্যাপ করতে ব্যর্থ (${detailUrl}):`, err.message);
+    await page.close();
+    return { docPrice: "N/A", securityAmount: "N/A" };
   }
 }
 
@@ -106,10 +162,13 @@ async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  await page.setViewport({ width: 800, height: 800, deviceScaleFactor: 2 });
+  await page.setViewport({ width: 800, height: 850, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
   const datesBn = convertToBanglaDigitsAndMonths(tender.dates);
+  const docPriceBn = convertToBanglaDigitsAndMonths(tender.docPrice);
+  const securityBn = convertToBanglaDigitsAndMonths(tender.securityAmount);
+
   const theme = COLOR_THEMES[Math.floor(Math.random() * COLOR_THEMES.length)];
 
   const htmlContent = `
@@ -123,7 +182,7 @@ async function generateTenderImage(browser, tender) {
       * { box-sizing: border-box; }
       body {
         width: 800px;
-        height: 800px;
+        height: 850px;
         margin: 0;
         padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
@@ -154,11 +213,11 @@ async function generateTenderImage(browser, tender) {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 18px 20px;
+        padding: 16px 20px;
         z-index: 2;
       }
       .header-title-bn {
-        font-size: 34px;
+        font-size: 32px;
         font-weight: 800;
         margin: 0;
       }
@@ -170,7 +229,7 @@ async function generateTenderImage(browser, tender) {
       }
 
       .content-body {
-        padding: 15px 40px;
+        padding: 15px 35px;
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -181,21 +240,21 @@ async function generateTenderImage(browser, tender) {
       .info-list {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 10px;
       }
 
       .info-item {
         display: flex;
         align-items: flex-start;
-        font-size: 21px;
+        font-size: 20px;
         color: #0f172a;
         font-weight: 700;
         line-height: 1.3;
       }
 
       .info-icon {
-        font-size: 24px;
-        width: 38px;
+        font-size: 22px;
+        width: 36px;
         text-align: center;
         margin-right: 8px;
         flex-shrink: 0;
@@ -229,7 +288,7 @@ async function generateTenderImage(browser, tender) {
       .footer-top-banner {
         background-color: #ffffff;
         color: ${theme.primary};
-        font-size: 20px;
+        font-size: 19px;
         font-weight: 800;
         padding: 6px 10px;
         text-align: center;
@@ -244,7 +303,7 @@ async function generateTenderImage(browser, tender) {
       }
 
       .brand-title {
-        font-size: 34px;
+        font-size: 32px;
         font-weight: 900;
         margin-bottom: 6px;
         letter-spacing: -0.3px;
@@ -262,7 +321,7 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 24px;
+        font-size: 22px;
         font-weight: 800;
       }
 
@@ -270,14 +329,14 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 29px;
+        font-size: 27px;
         font-weight: 800;
       }
 
       .social-icons {
         display: flex;
         gap: 6px;
-        font-size: 26px;
+        font-size: 24px;
       }
 
       .fa-whatsapp { color: #25D366; }
@@ -314,6 +373,16 @@ async function generateTenderImage(browser, tender) {
           <span class="info-icon">📌</span>
           <span class="info-label">পদ্ধতি (Method):</span>
           <span class="info-val">${tender.method}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-icon">💵</span>
+          <span class="info-label">ডকুমেন্ট মূল্য:</span>
+          <span class="info-val">${docPriceBn} ৳</span>
+        </div>
+        <div class="info-item">
+          <span class="info-icon">🛡️</span>
+          <span class="info-label">টেন্ডার সিকিউরিটি:</span>
+          <span class="info-val">${securityBn} ৳</span>
         </div>
         <div class="info-item">
           <span class="info-icon">📅</span>
@@ -368,6 +437,8 @@ function formatTenderMessage(tender) {
     `🏢 *প্রতিষ্ঠান:* ${tender.peName}`,
     `🏗️ *কাজের শিরোনাম:* ${tender.title}`,
     `📌 *পদ্ধতি:* ${tender.method}`,
+    `💵 *ডকুমেন্ট মূল্য:* ${tender.docPrice} BDT`,
+    `🛡️ *টেন্ডার সিকিউরিটি:* ${tender.securityAmount} BDT`,
     `📅 *সময়সূচী:* ${tender.dates}`,
     ``,
     `যোগাযোগ:`,
@@ -425,6 +496,17 @@ async function main() {
     console.log(`${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
 
     for (const tender of newTenders) {
+      // প্রতিটি টেন্ডারের ডিটেইলস পেজে ঢুকে বাড়তি তথ্য সংগ্রহ করা
+      if (tender.detailUrl) {
+        console.log(`Tender ID ${tender.id} এর ডিটেইলস স্ক্র্যাপ করা হচ্ছে...`);
+        const details = await fetchTenderDetails(browser, tender.detailUrl);
+        tender.docPrice = details.docPrice;
+        tender.securityAmount = details.securityAmount;
+      } else {
+        tender.docPrice = "N/A";
+        tender.securityAmount = "N/A";
+      }
+
       const caption = formatTenderMessage(tender);
       const imagePath = await generateTenderImage(browser, tender);
 
@@ -434,7 +516,7 @@ async function main() {
       }
 
       sentIds.add(tender.id);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
     }
 
     saveSentIds(sentIds);
