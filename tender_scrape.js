@@ -59,7 +59,6 @@ async function fetchTenders(browser) {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.waitForSelector('table', { timeout: 20000 });
 
-    // মূল টেবিল থেকে বেসিক ডাটা এবং ডিটেইলস পেজের লিংক স্ক্র্যাপ করা
     const tenders = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
@@ -69,7 +68,6 @@ async function fetchTenders(browser) {
         if (cols.length < 5) return;
 
         const col1Text = cols[1].innerText.trim(); // ID & Ref
-        const titleAnchor = cols[2].querySelector('a'); // Title Column Link
         const col2Text = cols[2].innerText.trim(); // Title & Nature
         const col3Text = cols[3].innerText.trim(); // PE / Ministry
         const col4Text = cols[4].innerText.trim(); // Type / Method
@@ -77,7 +75,9 @@ async function fetchTenders(browser) {
 
         const idMatch = col1Text.match(/\d+/);
         const tenderId = idMatch ? idMatch[0] : "";
-        const detailUrl = titleAnchor ? titleAnchor.href : null;
+
+        // javascript:void(0) এরর এড়াতে সরাসরি ViewNotice.jsp URL গঠন
+        const detailUrl = tenderId ? `https://www.eprocure.gov.bd/resources/common/ViewNotice.jsp?id=${tenderId}` : null;
 
         if (tenderId) {
           data.push({
@@ -110,14 +110,15 @@ async function fetchTenderDetails(browser, detailUrl) {
 
   const page = await browser.newPage();
   try {
-    await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(detailUrl, { waitUntil: 'networkidle2', timeout: 35000 });
 
     const details = await page.evaluate(() => {
       let docPrice = "N/A";
       let securityAmount = "N/A";
 
-      // Document Price বের করা
       const allTd = Array.from(document.querySelectorAll('td'));
+
+      // 1. Document Price খুঁজে বের করা
       for (let i = 0; i < allTd.length; i++) {
         const text = allTd[i].innerText.trim();
         if (text.includes("Tender/Proposal Document Price")) {
@@ -128,12 +129,12 @@ async function fetchTenderDetails(browser, detailUrl) {
         }
       }
 
-      // Security Amount বের করা (Lot Table থেকে)
-      const lotHeaderTd = allTd.find(td => td.innerText.includes("Tender/Proposal security"));
-      if (lotHeaderTd && lotHeaderTd.closest('table')) {
-        const table = lotHeaderTd.closest('table');
-        const headerRow = lotHeaderTd.closest('tr');
-        const colIndex = Array.from(headerRow.children).indexOf(lotHeaderTd);
+      // 2. Security Amount খুঁজে বের করা (Lot Table থেকে)
+      const securityHeader = allTd.find(td => td.innerText.includes("Tender/Proposal security"));
+      if (securityHeader && securityHeader.closest('table')) {
+        const table = securityHeader.closest('table');
+        const headerRow = securityHeader.closest('tr');
+        const colIndex = Array.from(headerRow.children).indexOf(securityHeader);
 
         const dataRows = Array.from(table.querySelectorAll('tr')).filter(tr => tr !== headerRow);
         if (dataRows.length > 0 && colIndex !== -1) {
@@ -150,7 +151,7 @@ async function fetchTenderDetails(browser, detailUrl) {
     await page.close();
     return details;
   } catch (err) {
-    console.error(`ডিটেইলস পেজ স্ক্র্যাপ করতে ব্যর্থ (${detailUrl}):`, err.message);
+    console.error(`ডিটেইলস পেজ স্ক্র্যাপ করতে ব্যর্থ:`, err.message);
     await page.close();
     return { docPrice: "N/A", securityAmount: "N/A" };
   }
@@ -496,7 +497,6 @@ async function main() {
     console.log(`${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
 
     for (const tender of newTenders) {
-      // প্রতিটি টেন্ডারের ডিটেইলস পেজে ঢুকে বাড়তি তথ্য সংগ্রহ করা
       if (tender.detailUrl) {
         console.log(`Tender ID ${tender.id} এর ডিটেইলস স্ক্র্যাপ করা হচ্ছে...`);
         const details = await fetchTenderDetails(browser, tender.detailUrl);
