@@ -49,6 +49,22 @@ function convertToBanglaDigitsAndMonths(text) {
   return str.replace(/[0-9]/g, w => digits[w]);
 }
 
+// কাজের ধরনের হুবহু বাংলা ম্যাপিং
+function getProcurementNatureBn(natureStr) {
+  if (!natureStr) return "N/A";
+  const clean = natureStr.trim().toLowerCase();
+  if (clean.includes("works")) return "কার্য বা নির্মাণ কাজ (Works)";
+  if (clean.includes("goods")) return "পণ্য বা মালামাল ক্রয় (Goods)";
+  if (clean.includes("services") || clean.includes("service")) return "সেবা কাজ (Services)";
+  return natureStr;
+}
+
+// টাইটেল ক্লিনআপ (শুরুর Works, Goods, Services মুছে ফেলা)
+function cleanTenderTitle(title) {
+  if (!title) return "";
+  return title.replace(/^(Works|Goods|Services|Service)\s*,\s*/i, "").trim();
+}
+
 // ইংরেজি থেকে বাংলা অটোমেটিক ট্রান্সলেটর (Google Translate API)
 async function translateToBangla(text) {
   if (!text || text === "N/A") return text;
@@ -61,7 +77,7 @@ async function translateToBangla(text) {
   } catch (err) {
     console.error("অনুবাদে ত্রুটি:", err.message);
   }
-  return text; // অনুবাদ ব্যর্থ হলে মূল টেক্সট থাকবে
+  return text;
 }
 
 // সংখ্যাকে বাংলায় কথায় রূপান্তর করার ফাংশন
@@ -136,7 +152,7 @@ async function fetchTendersAndDetails(browser) {
           data.push({
             rowIndex: index,
             id: tenderId,
-            title: col2Text.replace(/\n/g, ' '),
+            rawTitle: col2Text.replace(/\n/g, ' '),
             orgName: "N/A",
             district: "N/A",
             appId: "N/A",
@@ -197,7 +213,7 @@ async function fetchTendersAndDetails(browser) {
                   if (allCells[i + 1]) orgName = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
                 }
 
-                // Procuring Entity District (নিখুঁতভাবে জেলা সংগ্রহ)
+                // Procuring Entity District
                 if (text.includes("Procuring Entity District")) {
                   if (allCells[i + 1]) district = allCells[i + 1].innerText.replace(/\s+/g, ' ').trim();
                 }
@@ -256,11 +272,16 @@ async function fetchTendersAndDetails(browser) {
               return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate };
             });
 
+            // টাইটেল থেকে শুরুর Works/Goods/Services বাদ
+            const cleanedTitle = cleanTenderTitle(tender.rawTitle);
+
             // বাংলা অনুবাদের প্রক্রিয়া
             tender.orgNameBn = await translateToBangla(details.orgName);
-            tender.titleBn = await translateToBangla(tender.title);
+            tender.titleBn = await translateToBangla(cleanedTitle);
             tender.districtBn = await translateToBangla(details.district);
-            tender.natureBn = await translateToBangla(details.nature);
+            
+            // কাস্টম ম্যাপিং প্রয়োগ
+            tender.natureBn = getProcurementNatureBn(details.nature);
 
             tender.orgName = details.orgName;
             tender.appId = details.appId;
@@ -293,7 +314,8 @@ async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  await page.setViewport({ width: 800, height: 980, deviceScaleFactor: 2 });
+  // ক্যানভাস সাইজ সামঞ্জস্য
+  await page.setViewport({ width: 800, height: 1020, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
   const appIdBn = convertToBanglaDigitsAndMonths(tender.appId);
@@ -316,13 +338,13 @@ async function generateTenderImage(browser, tender) {
   <html lang="bn">
   <head>
     <meta charset="UTF-8">
-    <link href="https://fonts.googleapis.com/css2?family=Anek+Bangla:wght@600;700;800;900&family=Hind+Siliguri:wght@600;700;800&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Anek+Bangla:wght@500;600;700;800;900&family=Hind+Siliguri:wght@500;600;700;800&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
       * { box-sizing: border-box; }
       body {
         width: 800px;
-        height: 980px;
+        height: 1020px;
         margin: 0;
         padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
@@ -336,7 +358,7 @@ async function generateTenderImage(browser, tender) {
 
       .watermark {
         position: absolute;
-        top: 48%;
+        top: 50%;
         left: 50%;
         transform: translate(-50%, -50%) rotate(-28deg);
         font-size: 38px;
@@ -349,19 +371,19 @@ async function generateTenderImage(browser, tender) {
         z-index: 1;
       }
 
-      /* হেডারের নতুন ডিজাইন */
+      /* হেডার লেআউট */
       .header-box {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 18px 20px 14px 20px;
+        padding: 20px 24px 16px 24px;
         z-index: 2;
       }
       .header-org-name {
         font-size: 32px;
         font-weight: 900;
         color: #ffffff;
-        line-height: 1.2;
+        line-height: 1.25;
         margin-bottom: 6px;
       }
       .header-title-bn {
@@ -372,8 +394,9 @@ async function generateTenderImage(browser, tender) {
         letter-spacing: 0.5px;
       }
 
+      /* বডি কনটেন্ট */
       .content-body {
-        padding: 18px 35px;
+        padding: 20px 35px;
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -384,40 +407,41 @@ async function generateTenderImage(browser, tender) {
       .info-list {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 14px;
       }
 
       .info-item {
         display: flex;
         align-items: flex-start;
-        font-size: 21px;
+        font-size: 23px;
         color: #0f172a;
-        font-weight: 700;
-        line-height: 1.35;
+        line-height: 1.4;
       }
 
       .info-icon {
-        font-size: 22px;
-        width: 34px;
+        font-size: 24px;
+        width: 36px;
         text-align: center;
         margin-right: 8px;
         flex-shrink: 0;
       }
 
+      /* লেবেল বোল্ড এবং মূল তথ্য নরমাল */
       .info-label {
+        font-weight: 800;
         color: #0f172a;
-        margin-right: 6px;
+        margin-right: 8px;
         white-space: nowrap;
         flex-shrink: 0;
       }
 
       .info-val {
-        color: #0f172a;
-        font-weight: 800;
+        font-weight: 600;
+        color: #1e293b;
         word-break: break-word;
       }
 
-      /* Compact AllJobs Style Footer */
+      /* ফুটার সেকশন */
       .footer-container {
         padding: 0 25px 20px 25px;
         z-index: 2;
