@@ -1,4 +1,4 @@
-// eprocure.gov.bd থেকে ই-টেন্ডার নোটিশ স্ক্র্যাপ করে HD বাংলা ব্যানার তৈরি করে Telegram এ পাঠায়
+// eprocure.gov.bd থেকে ই-টেন্ডার নোটিশ স্ক্র্যাপ করে HD বাংলা ব্যানার তৈরি করে Telegram এ পাঠায়
 
 const fs = require("fs");
 const path = require("path");
@@ -32,7 +32,7 @@ function saveSentIds(set) {
   fs.writeFileSync(SENT_FILE, JSON.stringify(arr, null, 2), "utf-8");
 }
 
-// ইংরেজি ডিজিট ও মাস বাংলায় রূপান্তর
+// ইংরেজি ডিজিট ও মাস বাংলায় রূপান্তর
 function convertToBanglaDigitsAndMonths(text) {
   if (!text || text === "undefined" || text === "N/A") return text || "N/A";
   const digits = { '0': '০', '1': '১', '2': '২', '3': '৩', '4': '৪', '5': '৫', '6': '৬', '7': '৭', '8': '৮', '9': '৯' };
@@ -90,7 +90,7 @@ async function translateToBangla(text) {
   return convertToBanglaDigitsAndMonths(cleaned);
 }
 
-// টাকায় কথায় রূপান্তর
+// টাকায় কথায় রূপান্তর
 function numberToBanglaWords(amountStr) {
   if (!amountStr || isNaN(amountStr) || amountStr === "N/A") return "";
   let num = parseInt(amountStr, 10);
@@ -103,7 +103,7 @@ function numberToBanglaWords(amountStr) {
                 "একচল্লিশ", "বায়াল্লিশ", "তেতাল্লিশ", "চৌয়াল্লিশ", "পঁয়তাল্লিশ", "ছেচল্লিশ", "সাতচল্লিশ", "আটচল্লিশ", "উনপঞ্চাশ", "পঞ্চাশ", 
                 "একান্ন", "বায়ান্ন", "তিরিপান্ন", "চৌয়ান্ন", "পঁচান্ন", "ছাপ্পান্ন", "সাতান্ন", "আটান্ন", "উনষাট", "ষাট", 
                 "একষট্টি", "বাষট্টি", "তেষট্টি", "চৌষট্টি", "পঁয়ষট্টি", "ছেষট্টি", "সাতষট্টি", "আটষট্টি", "উনসত্তর", "সত্তর", 
-                "একাত্তর", "বাহাত্তর", "তিয়াত্তর", "চৌহাত্তর", "পঁচাত্তর", "ছিয়াত্তর", "সাতাত্তর", "আটাত্তর", "উনাশি", "আশি", 
+                "একাত্তর", "বাহাত্তর", "তিয়াত্তর", "চৌহাত্তর", "পঁচাত্তর", "ছিয়াত্তর", "সাতাত্তর", "আটাত্তর", "উনাশি", "আশি", 
                 "একাসি", "বিরাশি", "তিরাশি", "চৌরাশি", "পঁচাসি", "ছিয়াশি", "সাতাসি", "আটাসি", "উনানব্বই", "নব্বই", 
                 "একানব্বই", "বিরানব্বই", "তিরা নব্বই", "চৌরানব্বই", "পঁচানব্বই", "ছিয়ানব্বই", "সাতানব্বই", "আটানব্বই", "নিরানব্বই"];
 
@@ -174,7 +174,7 @@ async function runScraperTask() {
     const newTenders = basicList.filter(id => !sentIds.has(id));
 
     if (newTenders.length === 0) {
-      console.log("নতুন কোনো টেন্ডার পাওয়া যায়নি।");
+      console.log("নতুন কোনো টেন্ডার পাওয়া যায়নি।");
       await page.close();
       await browser.close();
       return;
@@ -289,7 +289,7 @@ async function runScraperTask() {
     await page.close();
 
   } catch (err) {
-    console.error("প্রধান স্ক্র্যাপিংয়ে সমস্যা:", err.message);
+    console.error("প্রধান স্ক্র্যাপিংয়ে সমস্যা:", err.message);
   } finally {
     await browser.close();
   }
@@ -301,7 +301,8 @@ async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  await page.setViewport({ width: 800, height: 1020, deviceScaleFactor: 2 });
+  // ১:১ স্কয়ার সাইজ ভিউপোর্ট (১০৮০ x ১০৮০)
+  await page.setViewport({ width: 1080, height: 1080, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
   const appIdBn = convertToBanglaDigitsAndMonths(tender.appId);
@@ -328,8 +329,8 @@ async function generateTenderImage(browser, tender) {
     <style>
       * { box-sizing: border-box; }
       body {
-        width: 800px;
-        height: 1020px;
+        width: 1080px;
+        height: 1080px;
         margin: 0;
         padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
@@ -360,25 +361,25 @@ async function generateTenderImage(browser, tender) {
         background-color: ${theme.primary};
         color: #ffffff;
         text-align: center;
-        padding: 20px 24px 16px 24px;
+        padding: 18px 24px 14px 24px;
         z-index: 2;
       }
       .header-org-name {
-        font-size: 32px;
+        font-size: 30px;
         font-weight: 900;
         color: #ffffff;
         line-height: 1.25;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
       }
       .header-title-bn {
-        font-size: 22px;
+        font-size: 20px;
         font-weight: 700;
         color: #f1f5f9;
         opacity: 0.95;
       }
 
       .content-body {
-        padding: 20px 35px;
+        padding: 15px 35px;
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -389,20 +390,20 @@ async function generateTenderImage(browser, tender) {
       .info-list {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 10px;
       }
 
       .info-item {
         display: flex;
         align-items: flex-start;
-        font-size: 23px;
+        font-size: 21px;
         color: #0f172a;
-        line-height: 1.4;
+        line-height: 1.35;
       }
 
       .info-icon {
-        font-size: 24px;
-        width: 36px;
+        font-size: 22px;
+        width: 32px;
         text-align: center;
         margin-right: 8px;
         flex-shrink: 0;
@@ -423,7 +424,7 @@ async function generateTenderImage(browser, tender) {
       }
 
       .footer-container {
-        padding: 0 25px 20px 25px;
+        padding: 0 25px 18px 25px;
         z-index: 2;
       }
 
@@ -437,9 +438,9 @@ async function generateTenderImage(browser, tender) {
       .footer-top-banner {
         background-color: #ffffff;
         color: ${theme.primary};
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 800;
-        padding: 5px 10px;
+        padding: 4px 10px;
         text-align: center;
         border-bottom: 2px solid ${theme.primary};
       }
@@ -447,15 +448,15 @@ async function generateTenderImage(browser, tender) {
       .footer-main-body {
         background-color: ${theme.primary};
         color: #ffffff;
-        padding: 10px 15px;
+        padding: 8px 15px;
         text-align: center;
       }
 
       .brand-title {
-        font-size: 34px;
+        font-size: 32px;
         font-weight: 900;
         line-height: 1.1;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
         white-space: nowrap;
       }
 
@@ -463,11 +464,11 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 30px;
+        gap: 25px;
       }
 
       .brand-address {
-        font-size: 21px;
+        font-size: 20px;
         font-weight: 800;
       }
 
@@ -475,14 +476,14 @@ async function generateTenderImage(browser, tender) {
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 25px;
+        font-size: 23px;
         font-weight: 800;
       }
 
       .social-icons {
         display: flex;
         gap: 6px;
-        font-size: 22px;
+        font-size: 20px;
       }
 
       .fa-whatsapp { color: #25D366; }
@@ -632,7 +633,7 @@ async function sendTelegramPhoto(imagePath, caption) {
     await axios.post(`https://api.telegram.org/bot${token}/sendPhoto`, formData, {
       headers: formData.getHeaders()
     });
-    console.log("Telegram এ টেন্ডার ব্যানার সফলভাবে পাঠানো হয়েছে ✅");
+    console.log("Telegram এ টেন্ডার ব্যানার সফলভাবে পাঠানো হয়েছে ✅");
     return true;
   } catch (e) {
     console.error("Telegram এ পাঠাতে সমস্যা:", e.message);
