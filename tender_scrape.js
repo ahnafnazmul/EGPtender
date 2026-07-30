@@ -11,9 +11,9 @@ const VIEW_URL_PREFIX = "https://www.eprocure.gov.bd/resources/common/ViewTender
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
 
 const COLOR_THEMES = [
-  { primary: "#0a3c22", watermark: "#10b981" }, // Deep Forest Green
-  { primary: "#0f2b48", watermark: "#3b82f6" }, // Deep Navy Blue
-  { primary: "#4c1d95", watermark: "#f59e0b" }  // Deep Violet
+  { primary: "#0a3c22", accent: "#059669", watermark: "#10b981", bgCard: "#f0fdf4" }, // Forest Green
+  { primary: "#0f2b48", accent: "#2563eb", watermark: "#3b82f6", bgCard: "#eff6ff" }, // Navy Blue
+  { primary: "#4c1d95", accent: "#d97706", watermark: "#f59e0b", bgCard: "#fef3c7" }  // Violet Amber
 ];
 
 // ---------- ইউটিলিটি ও অনুবাদ ফাংশন ----------
@@ -50,7 +50,7 @@ function convertToBanglaDigitsAndMonths(text) {
   return str.replace(/[0-9]/g, w => digits[w]);
 }
 
-// সংক্ষেপ রূপ অনুবাদক সমস্যা সমাধান (Dev. -> Development)
+// সংক্ষেপ রূপ অনুবাদক
 function preCleanEnglishText(text) {
   if (!text) return "";
   return text
@@ -132,7 +132,7 @@ function numberToBanglaWords(amountStr) {
   return words.trim() + " টাকা";
 }
 
-// ---------- e-GP স্ক্র্যাপিং (Direct Sequential Load) ----------
+// ---------- e-GP স্ক্র্যাপিং ----------
 
 async function runScraperTask() {
   console.log("--- e-GP টেন্ডার স্ক্র্যাপ চেক শুরু ---", new Date().toLocaleString("bn-BD"));
@@ -151,7 +151,6 @@ async function runScraperTask() {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.waitForSelector('table', { timeout: 20000 });
 
-    // মূল সার্চ টেবিল থেকে প্রথম ১০টি টেন্ডারের লিস্ট সংগ্রহ
     const basicList = await page.evaluate(() => {
       const allRows = Array.from(document.querySelectorAll('table tr')).filter(r => r.querySelectorAll('td').length >= 5);
       const data = [];
@@ -182,7 +181,6 @@ async function runScraperTask() {
 
     console.log(`মোট ১০টির মধ্যে ${newTenders.length}টি নতুন টেন্ডার প্রসেস করা হচ্ছে...`);
 
-    // ডাইরেক্ট ইউআরএল ধরে একে একে সম্পূর্ণ নির্ভুল স্ক্র্যাপিং
     for (const tenderId of newTenders) {
       try {
         const directUrl = VIEW_URL_PREFIX + tenderId;
@@ -228,7 +226,6 @@ async function runScraperTask() {
             }
           }
 
-          // Security Amount Lot Table Extraction
           const securityHeader = allCells.find(cell => {
             const cleanText = cell.innerText.replace(/\s+/g, ' ').trim();
             return cleanText.includes("Tender/Proposal security") || cleanText.includes("Amount in BDT");
@@ -254,7 +251,6 @@ async function runScraperTask() {
           return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate, title };
         });
 
-        // অনুবাদ ও ডাটা প্রস্তুতকরণ
         const tender = {
           id: tenderId,
           appId: details.appId,
@@ -295,13 +291,12 @@ async function runScraperTask() {
   }
 }
 
-// ---------- এইচডি টেন্ডার ব্যানার ইমেজ তৈরি ----------
+// ---------- এইচডি টেন্ডার ব্যানার ইমেজ তৈরি (কার্ড/বক্স ভ্যারিয়েন্ট) ----------
 
 async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
   const page = await browser.newPage();
 
-  // ১:১ স্কয়ার সাইজ ভিউপোর্ট (১০৮০ x ১০৮০)
   await page.setViewport({ width: 1080, height: 1080, deviceScaleFactor: 2 });
 
   const tenderIdBn = convertToBanglaDigitsAndMonths(tender.id);
@@ -327,14 +322,12 @@ async function generateTenderImage(browser, tender) {
     <link href="https://fonts.googleapis.com/css2?family=Anek+Bangla:wght@500;600;700;800;900&family=Hind+Siliguri:wght@500;600;700;800&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-      * { box-sizing: border-box; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
         width: 1080px;
         height: 1080px;
-        margin: 0;
-        padding: 0;
         font-family: 'Anek Bangla', 'Hind Siliguri', sans-serif;
-        background: #f8fafc;
+        background: #f1f5f9;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
@@ -347,142 +340,171 @@ async function generateTenderImage(browser, tender) {
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%) rotate(-28deg);
-        font-size: 38px;
-        font-weight: 800;
+        font-size: 42px;
+        font-weight: 900;
         font-family: 'Poppins', sans-serif;
         color: ${theme.watermark};
-        opacity: 0.08;
+        opacity: 0.07;
         white-space: nowrap;
         pointer-events: none;
         z-index: 1;
       }
 
+      /* Header Style */
       .header-box {
-        background-color: ${theme.primary};
+        background: linear-gradient(135deg, ${theme.primary}, #0f172a);
         color: #ffffff;
         text-align: center;
-        padding: 18px 24px 14px 24px;
+        padding: 22px 30px 18px 30px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.15);
         z-index: 2;
       }
-      .header-org-name {
-        font-size: 30px;
-        font-weight: 900;
-        color: #ffffff;
-        line-height: 1.25;
-        margin-bottom: 4px;
-      }
-      .header-title-bn {
-        font-size: 20px;
+      .header-badge {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #fbbf24;
+        padding: 4px 18px;
+        border-radius: 20px;
+        font-size: 18px;
         font-weight: 700;
-        color: #f1f5f9;
-        opacity: 0.95;
+        margin-bottom: 8px;
+        letter-spacing: 0.5px;
+      }
+      .header-org-name {
+        font-size: 28px;
+        font-weight: 800;
+        color: #ffffff;
+        line-height: 1.3;
       }
 
+      /* Content Area with Cards */
       .content-body {
-        padding: 15px 35px;
+        padding: 20px 30px;
         flex: 1;
         display: flex;
         flex-direction: column;
         justify-content: center;
+        gap: 12px;
         z-index: 2;
       }
 
-      .info-list {
+      /* Top Grid Cards */
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .card {
+        background: #ffffff;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border-left: 5px solid ${theme.primary};
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        justify-content: center;
       }
 
-      .info-item {
+      .card-full {
+        grid-column: span 2;
+      }
+
+      .card-highlight {
+        background: ${theme.bgCard};
+        border-left-color: ${theme.accent};
+      }
+
+      .card-label {
+        font-size: 16px;
+        font-weight: 800;
+        color: #64748b;
         display: flex;
-        align-items: flex-start;
-        font-size: 21px;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 2px;
+      }
+
+      .card-value {
+        font-size: 20px;
+        font-weight: 700;
         color: #0f172a;
         line-height: 1.35;
-      }
-
-      .info-icon {
-        font-size: 22px;
-        width: 32px;
-        text-align: center;
-        margin-right: 8px;
-        flex-shrink: 0;
-      }
-
-      .info-label {
-        font-weight: 800;
-        color: #0f172a;
-        margin-right: 8px;
-        white-space: nowrap;
-        flex-shrink: 0;
-      }
-
-      .info-val {
-        font-weight: 600;
-        color: #1e293b;
         word-break: break-word;
       }
 
+      .card-value-large {
+        font-size: 22px;
+        font-weight: 800;
+        color: ${theme.primary};
+      }
+
+      /* Footer Area */
       .footer-container {
-        padding: 0 25px 18px 25px;
+        padding: 0 30px 20px 30px;
         z-index: 2;
       }
 
       .footer-card {
         border: 2px solid ${theme.primary};
-        border-radius: 8px;
+        border-radius: 12px;
         overflow: hidden;
         background: #ffffff;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
       }
 
       .footer-top-banner {
-        background-color: #ffffff;
+        background-color: #f8fafc;
         color: ${theme.primary};
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 800;
-        padding: 4px 10px;
+        padding: 6px 12px;
         text-align: center;
-        border-bottom: 2px solid ${theme.primary};
+        border-bottom: 2px dashed ${theme.primary};
       }
 
       .footer-main-body {
         background-color: ${theme.primary};
         color: #ffffff;
-        padding: 8px 15px;
+        padding: 10px 20px;
         text-align: center;
       }
 
       .brand-title {
-        font-size: 32px;
+        font-size: 30px;
         font-weight: 900;
-        line-height: 1.1;
-        margin-bottom: 4px;
-        white-space: nowrap;
+        line-height: 1.2;
+        margin-bottom: 6px;
       }
 
       .footer-bottom-row {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 25px;
+        gap: 30px;
       }
 
       .brand-address {
-        font-size: 20px;
-        font-weight: 800;
+        font-size: 19px;
+        font-weight: 700;
+        color: #e2e8f0;
       }
 
       .phone-section {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 23px;
+        gap: 10px;
+        font-size: 22px;
         font-weight: 800;
+        background: rgba(255, 255, 255, 0.12);
+        padding: 3px 14px;
+        border-radius: 8px;
       }
 
       .social-icons {
         display: flex;
-        gap: 6px;
+        gap: 8px;
         font-size: 20px;
       }
 
@@ -495,61 +517,62 @@ async function generateTenderImage(browser, tender) {
     <div class="watermark">FNF COMPUTER & ONLINE SERVICES</div>
 
     <div class="header-box">
+      <div class="header-badge">ই-টেন্ডার নোটিশ (e-GP)</div>
       <div class="header-org-name">${tender.orgNameBn}</div>
-      <div class="header-title-bn">ই-টেন্ডার নোটিশ (e-GP)</div>
     </div>
 
     <div class="content-body">
-      <div class="info-list">
-        <div class="info-item">
-          <span class="info-icon">🆔</span>
-          <span class="info-label">টেন্ডার আইডি:</span>
-          <span class="info-val">${tenderIdBn}</span>
+      <div class="grid-2">
+        <div class="card card-highlight">
+          <div class="card-label">🆔 টেন্ডার আইডি</div>
+          <div class="card-value card-value-large">${tenderIdBn}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">🔢</span>
-          <span class="info-label">এপিপি আইডি (APP ID):</span>
-          <span class="info-val">${appIdBn}</span>
+        <div class="card">
+          <div class="card-label">🔢 এপিপি আইডি (APP ID)</div>
+          <div class="card-value">${appIdBn}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">🏢</span>
-          <span class="info-label">দপ্তর:</span>
-          <span class="info-val">${tender.orgNameBn}</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-label">🏢 দপ্তর / সংস্থা</div>
+          <div class="card-value">${tender.orgNameBn}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">📍</span>
-          <span class="info-label">এলাকা:</span>
-          <span class="info-val">${tender.districtBn}</span>
+        <div class="card">
+          <div class="card-label">📍 জেলা / এলাকা</div>
+          <div class="card-value">${tender.districtBn}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">🏗️</span>
-          <span class="info-label">কাজের বিবরণ:</span>
-          <span class="info-val">${tender.titleBn}</span>
+      </div>
+
+      <div class="card card-full">
+        <div class="card-label">🏗️ কাজের বিবরণ</div>
+        <div class="card-value">${tender.titleBn}</div>
+      </div>
+
+      <div class="card card-full">
+        <div class="card-label">📌 কাজের ধরন</div>
+        <div class="card-value">${tender.natureBn}</div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-label">💵 শিডিউল এর দাম</div>
+          <div class="card-value">${docPriceDisplay}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">📌</span>
-          <span class="info-label">কাজের ধরন:</span>
-          <span class="info-val">${tender.natureBn}</span>
+        <div class="card">
+          <div class="card-label">🛡️ সিকিউরিটি এমাউন্ট</div>
+          <div class="card-value">${securityDisplay}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">💵</span>
-          <span class="info-label">শিডিউল এর দাম:</span>
-          <span class="info-val">${docPriceDisplay}</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-label">📅 প্রকাশের তারিখ</div>
+          <div class="card-value">${pubDateBn}</div>
         </div>
-        <div class="info-item">
-          <span class="info-icon">🛡️</span>
-          <span class="info-label">সিকিউরিটি এমাউন্ট:</span>
-          <span class="info-val">${securityDisplay}</span>
-        </div>
-        <div class="info-item">
-          <span class="info-icon">📅</span>
-          <span class="info-label">প্রকাশের তারিখ:</span>
-          <span class="info-val">${pubDateBn}</span>
-        </div>
-        <div class="info-item">
-          <span class="info-icon">⏰</span>
-          <span class="info-label">জমাদানের শেষ তারিখ:</span>
-          <span class="info-val">${lastDateBn}</span>
+        <div class="card card-highlight">
+          <div class="card-label">⏰ জমাদানের শেষ তারিখ</div>
+          <div class="card-value card-value-large" style="color: #dc2626;">${lastDateBn}</div>
         </div>
       </div>
     </div>
