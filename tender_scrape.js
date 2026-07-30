@@ -11,9 +11,9 @@ const VIEW_URL_PREFIX = "https://www.eprocure.gov.bd/resources/common/ViewTender
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
 
 const COLOR_THEMES = [
-  { primary: "#0a3c22", accent: "#059669", watermark: "#10b981", bgCard: "#f0fdf4" }, // Forest Green
-  { primary: "#0f2b48", accent: "#2563eb", watermark: "#3b82f6", bgCard: "#eff6ff" }, // Navy Blue
-  { primary: "#4c1d95", accent: "#d97706", watermark: "#f59e0b", bgCard: "#fef3c7" }  // Violet Amber
+  { primary: "#0a3c22", accent: "#059669", watermark: "#0a3c22", bgCard: "#f0fdf4" }, // Forest Green
+  { primary: "#0f2b48", accent: "#2563eb", watermark: "#0f2b48", bgCard: "#eff6ff" }, // Navy Blue
+  { primary: "#4c1d95", accent: "#d97706", watermark: "#4c1d95", bgCard: "#fef3c7" }  // Violet Amber
 ];
 
 // ---------- ইউটিলিটি ও অনুবাদ ফাংশন ----------
@@ -291,7 +291,7 @@ async function runScraperTask() {
   }
 }
 
-// ---------- এইচডি টেন্ডার ব্যানার ইমেজ তৈরি (কার্ড/বক্স ভ্যারিয়েন্ট) ----------
+// ---------- এইচডি টেন্ডার ব্যানার ইমেজ তৈরি (ভিজিবল ওয়াটারমার্ক ভ্যারিয়েন্ট) ----------
 
 async function generateTenderImage(browser, tender) {
   const outputPath = path.join(__dirname, "temp_tender_banner.jpg");
@@ -335,19 +335,22 @@ async function generateTenderImage(browser, tender) {
         position: relative;
       }
 
+      /* ওয়াটারমার্ক z-index: 10 দিয়ে সবার ওপরে আনা হয়েছে */
       .watermark {
         position: absolute;
         top: 50%;
         left: 50%;
-        transform: translate(-50%, -50%) rotate(-28deg);
-        font-size: 42px;
+        transform: translate(-50%, -50%) rotate(-25deg);
+        font-size: 50px;
         font-weight: 900;
         font-family: 'Poppins', sans-serif;
         color: ${theme.watermark};
-        opacity: 0.07;
+        opacity: 0.12;
         white-space: nowrap;
         pointer-events: none;
-        z-index: 1;
+        z-index: 10;
+        width: 100%;
+        text-align: center;
       }
 
       /* Header Style */
@@ -397,7 +400,7 @@ async function generateTenderImage(browser, tender) {
       }
 
       .card {
-        background: #ffffff;
+        background: rgba(255, 255, 255, 0.92); /* সেমি-ট্রান্সপারেন্ট যাতে পেছনের ওয়াটারমার্ক দৃশ্যমান থাকে */
         padding: 12px 16px;
         border-radius: 12px;
         border-left: 5px solid ${theme.primary};
