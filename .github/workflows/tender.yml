@@ -2,7 +2,7 @@ name: e-GP Tender Notifier
 
 on:
   schedule:
-    # বাংলাদেশ সময় অনুযায়ী প্রতি ৪ ঘণ্টা পর পর চলবে
+    # বাংলাদেশ সময় অনুযায়ী প্রতি ৪ ঘণ্টা পর পর চলবে
     - cron: '0 * * * *'
   workflow_dispatch:
 
@@ -26,6 +26,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AGGREGATOR_BOT_TOKEN: ${{ secrets.AGGREGATOR_BOT_TOKEN }}
+          AGGREGATOR_CHAT_ID: ${{ secrets.AGGREGATOR_CHAT_ID }}
         run: node tender_scrape.js
 
       - name: নতুন পাঠানো টেন্ডার ফাইল সেভ করা
