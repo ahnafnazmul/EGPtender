@@ -10,6 +10,43 @@ const TARGET_URL = "https://www.eprocure.gov.bd/resources/common/StdTenderSearch
 const VIEW_URL_PREFIX = "https://www.eprocure.gov.bd/resources/common/ViewTender.jsp?id=";
 const SENT_FILE = path.join(__dirname, "sent_tenders.json");
 
+// শুধু বরিশাল বিভাগের টেন্ডার নোটিফাই করার জন্য — eprocure.gov.bd এ District ফিল্ডে
+// অনেক সময় উপজেলার নামও চলে আসে, তাই ৬টা জেলার পাশাপাশি প্রতিটার উপজেলাও রাখা হলো,
+// প্রচলিত ভিন্ন বানানসহ (case-insensitive match হবে)
+const BARISAL_DIVISION_DISTRICTS = [
+  // Barisal জেলা ও উপজেলা
+  "Barisal", "Barishal", "Bakerganj", "Babuganj", "Agailjhara", "Agailjhar",
+  "Muladi", "Mehendiganj", "Mehndiganj", "Banaripara", "Banaripada",
+  "Gournadi", "Gouranadi", "Gournady", "Hizla", "Wazirpur", "Wazipur",
+
+  // Bhola জেলা ও উপজেলা
+  "Bhola", "Borhanuddin", "Borhanudding", "Char Fasson", "Charfasson", "Char Fasan",
+  "Daulatkhan", "Doulatkhan", "Lalmohan", "Manpura", "Tazumuddin", "Tazumudding",
+
+  // Jhalokati জেলা ও উপজেলা
+  "Jhalokati", "Jhalokathi", "Jhalakati", "Jhalakathi",
+  "Kathalia", "Kathalea", "Nalchity", "Nalchiti", "Rajapur",
+
+  // Patuakhali জেলা ও উপজেলা
+  "Patuakhali", "Potuakhali", "Patuakhaly", "Potuakhaly",
+  "Bauphal", "Baufal", "Dashmina", "Doshmina", "Dumki",
+  "Galachipa", "Golachipa", "Kalapara", "Kolapara",
+  "Mirzaganj", "Mirja Ganj", "Rangabali", "Rangabali",
+
+  // Pirojpur জেলা ও উপজেলা
+  "Pirojpur", "Perojpur", "Pirozpur",
+  "Bhandaria", "Bhandaria", "Kawkhali", "Kaukhali",
+  "Mathbaria", "Mothbaria", "Nazirpur", "Najirpur",
+  "Nesarabad", "Swarupkathi", "Swarupkati",
+  "Zianagar", "Indurkani", "Indurkany",
+
+  // Barguna জেলা ও উপজেলা
+  "Barguna", "Bargona", "Borguna",
+  "Amtali", "Amtoli", "Bamna", "Bamana",
+  "Betagi", "Betagee", "Patharghata", "Patharghat",
+  "Taltali", "Taltoli"
+];
+
 const COLOR_THEMES = [
   { primary: "#0a3c22", accent: "#059669", watermark: "#0a3c22", bgCard: "#f0fdf4" }, // Forest Green
   { primary: "#0f2b48", accent: "#2563eb", watermark: "#0f2b48", bgCard: "#eff6ff" }, // Navy Blue
@@ -251,29 +288,41 @@ async function runScraperTask() {
           return { orgName, district, appId, nature, docPrice, securityAmount, pubDate, lastDate, title };
         });
 
-        const tender = {
-          id: tenderId,
-          appId: details.appId,
-          orgNameBn: details.orgName !== "N/A" ? await translateToBangla(details.orgName) : "N/A",
-          districtBn: details.district !== "N/A" ? await translateToBangla(details.district) : "N/A",
-          titleBn: details.title !== "N/A" ? await translateToBangla(details.title) : "N/A",
-          natureBn: getProcurementNatureBn(details.nature),
-          docPrice: details.docPrice,
-          securityAmount: details.securityAmount,
-          pubDate: details.pubDate,
-          lastDate: details.lastDate
-        };
+        // ---------- শুধু বরিশাল বিভাগের টেন্ডার হলেই নোটিফাই করা হবে ----------
+        // অন্য বিভাগের টেন্ডার হলে এখানেই স্কিপ হয়ে যায়, কোনো অনুবাদ/ইমেজ/টেলিগ্রাম কল হয় না
+        const districtRaw = (details.district || "").trim();
+        const isBarisalDivision = BARISAL_DIVISION_DISTRICTS.some(
+          (d) => districtRaw.toLowerCase().includes(d.toLowerCase())
+        );
 
-        const caption = formatTenderMessage(tender);
-        const imagePath = await generateTenderImage(browser, tender);
+        if (!isBarisalDivision) {
+          console.log(`টেন্ডার ${tenderId} বরিশাল বিভাগের বাইরে (District: ${districtRaw || "N/A"}), স্কিপ করা হলো।`);
+        } else {
+          const tender = {
+            id: tenderId,
+            appId: details.appId,
+            orgNameBn: details.orgName !== "N/A" ? await translateToBangla(details.orgName) : "N/A",
+            districtBn: details.district !== "N/A" ? await translateToBangla(details.district) : "N/A",
+            titleBn: details.title !== "N/A" ? await translateToBangla(details.title) : "N/A",
+            natureBn: getProcurementNatureBn(details.nature),
+            docPrice: details.docPrice,
+            securityAmount: details.securityAmount,
+            pubDate: details.pubDate,
+            lastDate: details.lastDate
+          };
 
-        if (imagePath && fs.existsSync(imagePath)) {
-          await sendTelegramPhoto(imagePath, caption);
-          await sendAggregatorPhoto(imagePath, caption); // নতুন লাইন — একই ছবি aggregator বটেও পাঠানো হচ্ছে
-          try { fs.unlinkSync(imagePath); } catch (e) {}
+          const caption = formatTenderMessage(tender);
+          const imagePath = await generateTenderImage(browser, tender);
+
+          if (imagePath && fs.existsSync(imagePath)) {
+            await sendTelegramPhoto(imagePath, caption);
+            await sendAggregatorPhoto(imagePath, caption); // একই ছবি aggregator বটেও পাঠানো হচ্ছে
+            try { fs.unlinkSync(imagePath); } catch (e) {}
+          }
         }
 
-        sentIds.add(tender.id);
+        // বরিশাল বিভাগের বাইরের টেন্ডারও sentIds এ যোগ হচ্ছে, যাতে পরের রানে আবার চেক করতে না হয়
+        sentIds.add(tenderId);
         saveSentIds(sentIds);
 
       } catch (err) {
